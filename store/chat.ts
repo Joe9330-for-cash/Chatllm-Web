@@ -593,6 +593,7 @@ export const useChatStore = create<ChatStore>()(
                   
                   try {
                     const data = JSON.parse(dataStr);
+                    console.log(`[前端流式调试] 🔍 解析到数据:`, data);
                     
                     if (data.type === 'thinking_start') {
                       // 处理思考开始信号 - 设置真正的思考开始时间
@@ -601,12 +602,14 @@ export const useChatStore = create<ChatStore>()(
                       }));
                     } else if (data.type === 'reasoning' && data.content) {
                       // 处理思考过程 - 保持思考状态，但改为深度思考
+                      console.log(`[前端流式调试] 接收到思考过程，长度: ${data.content.length}`);
                       set(state => ({ 
                         streamingReasoning: state.streamingReasoning + data.content,
                         isThinking: true // 保持思考状态
                       }));
                     } else if (data.content) {
                       // 处理最终回答内容 - 第一次收到content时结束思考状态并计算思考时间
+                      console.log(`[前端流式调试] 🎯 接收到回答内容，长度: ${data.content.length}, 内容: "${data.content.substring(0, 50)}..."`);
                       set(state => {
                         const isFirstContent = state.streamingMessage === '';
                         const thinkingTime = isFirstContent && state.thinkingStartTime 
@@ -614,6 +617,7 @@ export const useChatStore = create<ChatStore>()(
                           : undefined;
                         
                         console.log(`[思考时间] ${currentModel} 思考用时: ${thinkingTime ? (thinkingTime / 1000).toFixed(1) : 0}s`);
+                        console.log(`[前端状态更新] 当前流式消息长度: ${state.streamingMessage.length}, 新增: ${data.content.length}`);
                         
                         return {
                           streamingMessage: state.streamingMessage + data.content,

@@ -144,6 +144,19 @@ export function ChatBox() {
   const streamingReasoning = useChatStore((state) => state.streamingReasoning);
   const isStreaming = useChatStore((state) => state.isStreaming);
   const isThinking = useChatStore((state) => state.isThinking);
+  
+  // 调试：监听流式状态变化
+  useEffect(() => {
+    if (streamingMessage) {
+      console.log(`[前端组件调试] streamingMessage 更新，长度: ${streamingMessage.length}`);
+    }
+  }, [streamingMessage]);
+  
+  useEffect(() => {
+    if (streamingReasoning) {
+      console.log(`[前端组件调试] streamingReasoning 更新，长度: ${streamingReasoning.length}`);
+    }
+  }, [streamingReasoning]);
 
   const onInput = (text: string) => {
     setUserInput(text);
