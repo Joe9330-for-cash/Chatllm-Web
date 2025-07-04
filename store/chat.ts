@@ -7,6 +7,7 @@ import { ChatConversation, InitInfo, Message, SupportedModel, ChatApiResponse } 
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { flushSync } from 'react-dom';
 
 const CHATSTORE_KEY = 'chat-web-llm-store';
 
@@ -84,6 +85,7 @@ export interface ChatStore {
     username: string;
     isLoggedIn: boolean;
   } | null;
+  forceUpdateTrigger: number; // 新增：强制更新触发器
   newConversation: () => void;
   delConversation: (index: number) => void;
   chooseConversation: (index: number) => void;
@@ -124,6 +126,7 @@ export const useChatStore = create<ChatStore>()(
       memoryEnabled: true, // 新增：默认启用记忆功能
       userId: 'default_user', // 新增：默认用户ID
       user: null, // 新增：用户信息
+      forceUpdateTrigger: 0, // 新增：强制更新触发器
       initInfoTmp: {
         showModal: false,
         initMsg: [],
@@ -603,33 +606,43 @@ export const useChatStore = create<ChatStore>()(
                     } else if (data.type === 'reasoning' && data.content) {
                       // 处理思考过程 - 保持思考状态，但改为深度思考
                       console.log(`[前端流式调试] 接收到思考过程，长度: ${data.content.length}`);
-                      set(state => ({ 
-                        streamingReasoning: state.streamingReasoning + data.content,
-                        isThinking: true // 保持思考状态
-                      }));
+                      flushSync(() => {
+                        set(state => ({ 
+                          streamingReasoning: state.streamingReasoning + data.content,
+                          isThinking: true, // 保持思考状态
+                          forceUpdateTrigger: state.forceUpdateTrigger + 1 // 强制触发更新
+                        }));
+                      });
+                      // 添加微小延迟，确保UI有时间处理更新
+                      await new Promise(resolve => setTimeout(resolve, 1));
                     } else if (data.content) {
                       // 处理最终回答内容 - 第一次收到content时结束思考状态并计算思考时间
                       console.log(`[前端流式调试] 🎯 接收到回答内容，长度: ${data.content.length}, 内容: "${data.content.substring(0, 50)}..."`);
-                      set(state => {
-                        const isFirstContent = state.streamingMessage === '';
-                        const thinkingTime = isFirstContent && state.thinkingStartTime 
-                          ? Math.max(0, Date.now() - state.thinkingStartTime) 
-                          : undefined;
-                        
-                        console.log(`[思考时间] ${currentModel} 思考用时: ${thinkingTime ? (thinkingTime / 1000).toFixed(1) : 0}s`);
-                        console.log(`[前端状态更新] 当前流式消息长度: ${state.streamingMessage.length}, 新增: ${data.content.length}`);
-                        
-                        return {
-                          streamingMessage: state.streamingMessage + data.content,
-                          isThinking: false, // 开始输出答案，思考结束
-                          ...(thinkingTime && { 
-                            streamingStats: {
-                              ...state.streamingStats,
-                              thinkingTime
-                            }
-                          })
-                        };
+                      flushSync(() => {
+                        set(state => {
+                          const isFirstContent = state.streamingMessage === '';
+                          const thinkingTime = isFirstContent && state.thinkingStartTime 
+                            ? Math.max(0, Date.now() - state.thinkingStartTime) 
+                            : undefined;
+                          
+                          console.log(`[思考时间] ${currentModel} 思考用时: ${thinkingTime ? (thinkingTime / 1000).toFixed(1) : 0}s`);
+                          console.log(`[前端状态更新] 当前流式消息长度: ${state.streamingMessage.length}, 新增: ${data.content.length}`);
+                          
+                          return {
+                            streamingMessage: state.streamingMessage + data.content,
+                            isThinking: false, // 开始输出答案，思考结束
+                            forceUpdateTrigger: state.forceUpdateTrigger + 1, // 强制触发更新
+                            ...(thinkingTime && { 
+                              streamingStats: {
+                                ...state.streamingStats,
+                                thinkingTime
+                              }
+                            })
+                          };
+                        });
                       });
+                      // 添加微小延迟，确保UI有时间处理更新
+                      await new Promise(resolve => setTimeout(resolve, 1));
                     } else if (data.done) {
                       // 流式输出完成，处理统计信息
                       console.log(`[Stream] ✅ ${currentModel}: 流式输出完成`);

@@ -197,6 +197,7 @@ export function ChatBox() {
   const streamingReasoning = useChatStore((state) => state.streamingReasoning);
   const isStreaming = useChatStore((state) => state.isStreaming);
   const isThinking = useChatStore((state) => state.isThinking);
+  const forceUpdateTrigger = useChatStore((state) => state.forceUpdateTrigger);
   
   const onInput = (text: string) => {
     setUserInput(text);
@@ -207,23 +208,23 @@ export function ChatBox() {
   // 调试：监听流式状态变化
   useEffect(() => {
     if (streamingMessage) {
-      console.log(`[前端组件调试] streamingMessage 更新，长度: ${streamingMessage.length}`);
+      console.log(`[前端组件调试] streamingMessage 更新，长度: ${streamingMessage.length}, trigger: ${forceUpdateTrigger}`);
       // 强制滚动到底部
       setTimeout(() => {
         scrollToBottom();
       }, 10);
     }
-  }, [streamingMessage, scrollToBottom]);
+  }, [streamingMessage, scrollToBottom, forceUpdateTrigger]);
   
   useEffect(() => {
     if (streamingReasoning) {
-      console.log(`[前端组件调试] streamingReasoning 更新，长度: ${streamingReasoning.length}`);
+      console.log(`[前端组件调试] streamingReasoning 更新，长度: ${streamingReasoning.length}, trigger: ${forceUpdateTrigger}`);
       // 强制滚动到底部
       setTimeout(() => {
         scrollToBottom();
       }, 10);
     }
-  }, [streamingReasoning, scrollToBottom]);
+  }, [streamingReasoning, scrollToBottom, forceUpdateTrigger]);
 
   // 只在首次加载时检查模型状态，添加防重复调用机制
   useEffect(() => {

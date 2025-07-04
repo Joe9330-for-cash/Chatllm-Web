@@ -174,6 +174,6 @@ export class MemoryExtractor {
       facts: 6, 
       other: 3,
     };
-    return weights[category] || 5;
+    return weights[category as string] || 5;
   }
 }
