@@ -1,5 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { getIntelligentMemoryManager } from '@/lib/memory/intelligent-manager';
+import { getSmartMemoryManager } from '@/lib/memory/smart-memory-manager';
+import { getPerformanceMonitor } from '@/lib/memory/performance-monitor';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -7,7 +8,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const { userId, messages, conversationId } = req.body;
+    const { userId, messages, conversationId, forceExtraction = false } = req.body;
 
     if (!userId || !messages || !Array.isArray(messages)) {
       return res.status(400).json({ error: 'Missing required fields: userId, messages' });
@@ -15,28 +16,31 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     console.log(`[Memory API] 智能记忆提取请求 - 用户: ${userId}, 消息数: ${messages.length}`);
 
-    const intelligentManager = getIntelligentMemoryManager();
+    const smartMemoryManager = getSmartMemoryManager();
+    const performanceMonitor = getPerformanceMonitor();
     
-    // 使用智能管理器提取记忆
-    const extractionResult = await intelligentManager.extractMemories(
+    // 使用智能记忆管理系统提取记忆
+    const extractionResult = await smartMemoryManager.smartExtraction(
       userId,
       messages,
-      conversationId
+      forceExtraction
     );
 
-    console.log(`[Memory API] ✅ 智能提取完成: 提取${extractionResult.memories.length}条记忆`);
-    console.log(`[Memory API] 提取方法: ${extractionResult.method}, 置信度: ${extractionResult.confidence}`);
+    console.log(`[Memory API] ✅ 智能提取完成: 提取${extractionResult.extractedMemories.length}条记忆`);
+    console.log(`[Memory API] 提取来源: ${extractionResult.source}, 置信度: ${extractionResult.confidence}`);
+    console.log(`[Memory API] 性能数据: ${JSON.stringify(extractionResult.performance)}`);
 
     // 返回提取结果
     return res.status(200).json({
       success: true,
       result: {
-        memories: extractionResult.memories,
-        method: extractionResult.method,
-        reasoning: extractionResult.reasoning,
+        memories: extractionResult.extractedMemories,
+        source: extractionResult.source,
         confidence: extractionResult.confidence,
         performance: extractionResult.performance,
-        extractedCount: extractionResult.memories.length
+        extractedCount: extractionResult.extractedMemories.length,
+        optimizationApplied: extractionResult.source !== 'llm',
+        systemStats: smartMemoryManager.getSystemStats()
       }
     });
 

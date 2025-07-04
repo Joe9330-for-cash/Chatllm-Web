@@ -1,0 +1,233 @@
+{
+  "startTime": "2025-07-04T10:15:40.358Z",
+  "endTime": "2025-07-04T10:15:40.409Z",
+  "tests": [
+    {
+      "name": "MySQL连接测试",
+      "passed": true,
+      "duration": 3,
+      "result": {
+        "status": "connected",
+        "database": "chatllm_memories"
+      }
+    },
+    {
+      "name": "表结构测试",
+      "passed": true,
+      "duration": 6,
+      "result": {
+        "memories": {
+          "exists": true,
+          "columns": 11
+        },
+        "vector_memories": {
+          "exists": true,
+          "columns": 7
+        },
+        "memory_vectors": {
+          "exists": true,
+          "columns": 3
+        }
+      }
+    },
+    {
+      "name": "数据完整性测试",
+      "passed": true,
+      "duration": 1,
+      "result": {
+        "memoryCount": {
+          "sqlite": 283,
+          "mysql": 283
+        },
+        "vectorCount": {
+          "sqlite": 237,
+          "mysql": 237
+        },
+        "integrity": {
+          "memory": true,
+          "vector": true
+        }
+      }
+    },
+    {
+      "name": "记忆搜索测试",
+      "passed": true,
+      "duration": 3,
+      "result": {
+        "技能": {
+          "count": 2,
+          "results": [
+            {
+              "id": 132,
+              "category": "skills",
+              "content_preview": "技能包括产品设计和数据分析。"
+            },
+            {
+              "id": 142,
+              "category": "work_context",
+              "content_preview": "公司文化关键词为高效精益和敏捷迭代，员工成长支持包括每月AI及办公软件培训和年度专项技能培训。"
+            }
+          ]
+        },
+        "工作": {
+          "count": 5,
+          "results": [
+            {
+              "id": 208,
+              "category": "skills",
+              "content_preview": "智商127-130，自我要求高，学习与执行力极强，擅长高强度工作。"
+            },
+            {
+              "id": 196,
+              "category": "projects",
+              "content_preview": "AI创业项目定位为企业主与AI创业者，提供AI提效课程、Agent工作流系统与智能定制服务。"
+            },
+            {
+              "id": 193,
+              "category": "skills",
+              "content_preview": "智商127-130，自我要求高，学习与执行力极强，擅长高强度工作。"
+            },
+            {
+              "id": 151,
+              "category": "learning_study",
+              "content_preview": "测评工具包含64个问题，分为8个需求类型：财富型、健康型、享乐型、工作型、权力型、创新/研发型、情感型、成就/荣誉型。"
+            },
+            {
+              "id": 108,
+              "category": "work_context",
+              "content_preview": "用户在腾讯工作，职位是AI产品经理。"
+            }
+          ]
+        },
+        "个人信息": {
+          "count": 1,
+          "results": [
+            {
+              "id": 267,
+              "category": "goals",
+              "content_preview": "用户可能需要整理个人信息以用于职业相关场景。"
+            }
+          ]
+        },
+        "项目经验": {
+          "count": 0,
+          "results": []
+        },
+        "教育背景": {
+          "count": 0,
+          "results": []
+        }
+      }
+    },
+    {
+      "name": "分类统计测试",
+      "passed": true,
+      "duration": 0,
+      "result": {
+        "totalCategories": 28,
+        "categories": [
+          {
+            "category": "work_context",
+            "count": 63
+          },
+          {
+            "category": "personal_info",
+            "count": 28
+          },
+          {
+            "category": "financial_money",
+            "count": 22
+          },
+          {
+            "category": "goals",
+            "count": 22
+          },
+          {
+            "category": "skills",
+            "count": 14
+          },
+          {
+            "category": "relationships",
+            "count": 14
+          },
+          {
+            "category": "learning_study",
+            "count": 13
+          },
+          {
+            "category": "lifestyle",
+            "count": 13
+          },
+          {
+            "category": "health_medical",
+            "count": 10
+          },
+          {
+            "category": "projects",
+            "count": 10
+          }
+        ]
+      }
+    },
+    {
+      "name": "向量查询测试",
+      "passed": false,
+      "error": "Unexpected non-whitespace character after JSON at position 21 (line 1 column 22)"
+    },
+    {
+      "name": "性能测试",
+      "passed": true,
+      "duration": 14,
+      "result": {
+        "basicQuery": {
+          "time": 1,
+          "count": 283
+        },
+        "searchQuery": {
+          "time": 1,
+          "results": 2
+        },
+        "statsQuery": {
+          "time": 0,
+          "categories": 28
+        },
+        "vectorQuery": {
+          "time": 12,
+          "results": 10
+        }
+      }
+    },
+    {
+      "name": "数据库大小测试",
+      "passed": true,
+      "duration": 3,
+      "result": {
+        "totalSize": "07.520.200.19",
+        "tables": [
+          {
+            "TABLE_NAME": "memory_vectors",
+            "size_mb": "7.52"
+          },
+          {
+            "TABLE_NAME": "vector_memories",
+            "size_mb": "0.20"
+          },
+          {
+            "TABLE_NAME": "memories",
+            "size_mb": "0.19"
+          }
+        ]
+      }
+    }
+  ],
+  "passed": 7,
+  "failed": 1,
+  "errors": [
+    {
+      "test": "向量查询测试",
+      "error": "Unexpected non-whitespace character after JSON at position 21 (line 1 column 22)"
+    }
+  ],
+  "duration": "0秒",
+  "successRate": "88%"
+}

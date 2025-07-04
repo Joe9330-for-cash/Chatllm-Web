@@ -1,8 +1,9 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { SUPPORTED_MODELS, SupportedModel } from './chat';
 import { getEmbeddingService } from '@/lib/memory/embedding-service';
-import { getVectorDatabase } from '@/lib/memory/vector-database';
-import { getMemoryDB } from '@/lib/memory/database';
+import { getMySQLMemoryDB } from '@/lib/memory/mysql-database';
+import { getSmartMemoryManager } from '@/lib/memory/smart-memory-manager';
+import { getPerformanceMonitor } from '@/lib/memory/performance-monitor';
 import https from 'https';
 
 // 改进的HTTPS代理配置，包含连接池和超时设置
@@ -78,127 +79,41 @@ export default async function handler(
       if (lastUserMessage) {
         console.log(`[Stream API] 🔍 搜索相关记忆: "${lastUserMessage.content.substring(0, 50)}..."`);
         
-        // 直接调用记忆搜索逻辑
-        const embeddingService = getEmbeddingService();
-        const vectorDB = getVectorDatabase();
-        const memoryDB = getMemoryDB();
+        // 使用智能记忆管理系统
+        const smartMemoryManager = getSmartMemoryManager();
+        const performanceMonitor = getPerformanceMonitor();
         
-                 const userId = 'default_user';
-         const query = lastUserMessage.content;
-         const limit = 100; // 大幅增加搜索数量
+        const userId = 'default_user';
+        const query = lastUserMessage.content;
+        const limit = 50;
         
-        console.log(`[Stream API] 🔍 开始记忆搜索...`);
+        console.log(`[Stream API] 🔍 开始智能记忆搜索...`);
         
-        const results = [];
+        // 智能搜索 - 自动选择最优搜索策略
+        const searchResult = await smartMemoryManager.smartSearch(userId, query, limit);
         
-        // 1. 向量搜索
-        try {
-                     const queryVector = await embeddingService.generateEmbedding(query);
-           const vectorResults = await vectorDB.searchSimilarMemories(
-             userId,
-             queryVector,
-             limit * 5, // 大幅增加候选数量
-             0.05 // 极低相似性阈值，获取更多候选
-           );
-          
-          console.log(`[Stream API] 🎯 向量搜索找到 ${vectorResults.length} 条结果`);
-          
-          // 转换向量搜索结果
-          for (const vectorResult of vectorResults) {
-            results.push({
-              id: vectorResult.memory.id,
-              content: vectorResult.memory.content,
-              category: vectorResult.memory.category,
-              importance: (vectorResult.memory as any).importance || 5,
-              timestamp: (vectorResult.memory as any).timestamp || (vectorResult.memory as any).createdAt,
-              relevanceScore: vectorResult.similarity,
-              searchType: 'vector'
-            });
-          }
-        } catch (vectorError) {
-          console.warn(`[Stream API] ⚠️ 向量搜索失败:`, vectorError);
-        }
+        console.log(`[Stream API] ✅ 智能搜索完成: ${searchResult.results.length} 条结果, 来源: ${searchResult.source}`);
+        console.log(`[Stream API] 📊 搜索性能: ${JSON.stringify(searchResult.performance)}`);
         
-                 // 2. 补充关键词搜索（无论向量搜索结果多少都执行）
-         try {
-           const keywordResults = memoryDB.searchMemories(userId, query, limit * 3);
-           
-           console.log(`[Stream API] 🔤 关键词搜索找到 ${keywordResults.length} 条结果`);
-           
-           // 添加关键词搜索结果（避免重复）
-           for (const memory of keywordResults) {
-             const isDuplicate = results.some(r => r.id === memory.id);
-             if (!isDuplicate) {
-               results.push({
-                 id: memory.id,
-                 content: memory.content,
-                 category: memory.category,
-                 importance: memory.importance,
-                 timestamp: memory.createdAt,
-                 relevanceScore: 0.8, // 给关键词搜索更高的相关性
-                 searchType: 'keyword'
-               });
-             }
-           }
-         } catch (keywordError) {
-           console.warn(`[Stream API] ⚠️ 关键词搜索失败:`, keywordError);
-         }
-         
-         // 3. 如果是个人介绍相关查询，额外搜索个人信息
-         if (query.includes('介绍') || query.includes('自己') || query.includes('基本情况')) {
-           try {
-             console.log(`[Stream API] 🔍 检测到个人介绍查询，搜索个人信息...`);
-             
-             // 搜索个人信息类别的记忆
-             const personalCategories = ['personal_info', 'preferences', 'skills', 'experiences', 'lifestyle'];
-             
-             for (const category of personalCategories) {
-               const categoryResults = memoryDB.getMemoriesByCategory(userId, category);
-               console.log(`[Stream API] 📋 ${category} 类别找到 ${categoryResults.length} 条记忆`);
-               
-               for (const memory of categoryResults) {
-                 const isDuplicate = results.some(r => r.id === memory.id);
-                 if (!isDuplicate) {
-                   results.push({
-                     id: memory.id,
-                     content: memory.content,
-                     category: memory.category,
-                     importance: memory.importance,
-                     timestamp: memory.createdAt,
-                     relevanceScore: 0.9, // 给个人信息最高的相关性
-                     searchType: 'category'
-                   });
-                 }
-               }
-             }
-           } catch (personalError) {
-             console.warn(`[Stream API] ⚠️ 个人信息搜索失败:`, personalError);
-           }
-         }
+        const relevantMemories = searchResult.results
+          .slice(0, limit); // 使用完整的50条限制
         
-                 // 4. 排序和限制结果
-         const relevantMemories = results
-           .sort((a, b) => b.relevanceScore - a.relevanceScore)
-           .slice(0, limit);
-         
-         console.log(`[Stream API] 📊 搜索结果汇总:`);
-         console.log(`[Stream API] - 向量搜索: ${results.filter(r => r.searchType === 'vector').length} 条`);
-         console.log(`[Stream API] - 关键词搜索: ${results.filter(r => r.searchType === 'keyword').length} 条`);
-         console.log(`[Stream API] - 类别搜索: ${results.filter(r => r.searchType === 'category').length} 条`);
-         console.log(`[Stream API] - 总候选记忆: ${results.length} 条`);
-         console.log(`[Stream API] - 最终使用记忆: ${relevantMemories.length} 条`);
+        console.log(`[Stream API] 📊 搜索结果汇总:`);
+        console.log(`[Stream API] - 搜索来源: ${searchResult.source}`);
+        console.log(`[Stream API] - 搜索性能: ${JSON.stringify(searchResult.performance)}`);
+        console.log(`[Stream API] - 最终使用记忆: ${relevantMemories.length} 条`);
         
         console.log(`[Stream API] 🎯 找到 ${relevantMemories.length} 条相关记忆`);
         
         if (relevantMemories.length > 0) {
-                     // 构建详细的记忆上下文
-           const filteredMemories = relevantMemories
-             .filter((m: any) => m.relevanceScore > 0.7) // 提高相关性阈值到0.7
-             .slice(0, 50); // 取前50条最相关的记忆
+          // 构建高质量记忆上下文 - 支持更多记忆
+          const filteredMemories = relevantMemories
+            .filter((m: any) => m.relevanceScore > 0.5) // 降低阈值，但保持质量
+            .slice(0, 30); // 增加到30条最相关记忆
           
           console.log(`[Stream API] 📋 构建记忆上下文: ${filteredMemories.length} 条记忆`);
           
-          // 按类别分组显示记忆
+          // 按类别分组记忆，提供更结构化的上下文
           const memoryByCategory: { [key: string]: any[] } = {};
           filteredMemories.forEach((memory: any) => {
             if (!memoryByCategory[memory.category]) {
@@ -207,13 +122,15 @@ export default async function handler(
             memoryByCategory[memory.category].push(memory);
           });
           
-          // 构建分类记忆上下文
+          // 构建结构化记忆上下文
           let memoryContext = '';
           Object.keys(memoryByCategory).forEach(category => {
-            memoryContext += `\n## ${category}:\n`;
-            memoryByCategory[category].forEach((memory: any, index: number) => {
-              memoryContext += `- ${memory.content} (相关性: ${memory.relevanceScore.toFixed(3)})\n`;
-            });
+            if (memoryByCategory[category].length > 0) {
+              memoryContext += `\n## ${category.toUpperCase()}:\n`;
+              memoryByCategory[category].slice(0, 8).forEach((memory: any, index: number) => {
+                memoryContext += `${index + 1}. ${memory.content}\n`;
+              });
+            }
           });
           
           if (memoryContext.trim()) {
@@ -230,9 +147,9 @@ ${memoryContext}
             enhancedMessages = [systemMessage, ...messages];
             console.log(`[Stream API] ✅ 记忆上下文已添加 (${memoryContext.length}字符)`);
             
-            // 打印所有记忆详情
+            // 打印记忆调用详情
             console.log(`[Stream API] 📊 记忆调用详情:`);
-            filteredMemories.forEach((memory: any, index: number) => {
+            filteredMemories.slice(0, 10).forEach((memory: any, index: number) => {
               console.log(`[Stream API] 记忆${index + 1}: [${memory.category}] 相关性=${memory.relevanceScore.toFixed(3)} "${memory.content.substring(0, 60)}..."`);
             });
           }

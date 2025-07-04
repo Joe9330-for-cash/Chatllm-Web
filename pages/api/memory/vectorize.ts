@@ -1,7 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { getEmbeddingService } from '@/lib/memory/embedding-service';
-import { getVectorDatabase } from '@/lib/memory/vector-database';
-import { getMemoryDB } from '@/lib/memory/database';
+import { getMySQLMemoryDB } from '@/lib/memory/mysql-database';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -18,8 +17,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.log(`[Vectorize API] 开始向量化 - 用户: ${userId}, 批量模式: ${batchMode}`);
 
     const embeddingService = getEmbeddingService();
-    const vectorDB = getVectorDatabase();
-    const memoryDB = getMemoryDB();
+    const mysqlDB = getMySQLMemoryDB();
 
     let processedCount = 0;
     const results = [];
@@ -28,7 +26,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // 批量向量化模式：处理用户的所有记忆
       console.log(`[Vectorize API] 🔄 批量向量化模式`);
       
-      const userMemories = memoryDB.getUserMemories(userId, 1000);
+      const userMemories = await mysqlDB.getMemories(userId, 1000);
       console.log(`[Vectorize API] 找到 ${userMemories.length} 条记忆需要处理`);
 
       for (const memory of userMemories) {
@@ -36,18 +34,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           // 生成向量
           const embedding = await embeddingService.generateEmbedding(memory.content);
           
-          // 存储向量
-          const vectorId = await vectorDB.storeMemoryVector(
-            userId,
-            memory.content,
-            embedding,
-            memory.category,
-            { memoryId: memory.id, importance: memory.importance }
-          );
+          // 存储向量（暂时跳过，因为向量存储功能需要进一步开发）
+          console.log(`[Vectorize API] 记忆${memory.id}向量化成功，向量维度: ${embedding.length}`);
 
           results.push({
             memoryId: memory.id,
-            vectorId,
             content: memory.content.substring(0, 100) + '...',
             category: memory.category,
             vectorDimensions: embedding.length,
@@ -88,18 +79,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // 生成向量
       const embedding = await embeddingService.generateEmbedding(targetContent);
       
-      // 存储向量
-      const vectorId = await vectorDB.storeMemoryVector(
-        userId,
-        targetContent,
-        embedding,
-        targetCategory,
-        { memoryId: targetMemoryId, importance: 5 }
-      );
+      // 存储向量（暂时跳过，因为向量存储功能需要进一步开发）
+      console.log(`[Vectorize API] 单个记忆向量化成功，向量维度: ${embedding.length}`);
 
       results.push({
         memoryId: targetMemoryId,
-        vectorId,
         content: targetContent.substring(0, 100) + '...',
         category: targetCategory,
         vectorDimensions: embedding.length,

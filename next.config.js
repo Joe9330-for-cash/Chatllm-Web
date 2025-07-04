@@ -20,7 +20,7 @@ const nextConfig = {
   
   // webpack配置优化
   webpack: (config, { isServer, dev }) => {
-    // 只在服务端打包时包含 better-sqlite3
+    // 客户端fallback配置
     if (!isServer) {
       config.resolve.fallback = {
         ...config.resolve.fallback,
@@ -28,11 +28,6 @@ const nextConfig = {
         path: false,
         os: false,
       };
-    }
-    
-    // 配置外部化 better-sqlite3
-    if (isServer) {
-      config.externals = [...(config.externals || []), 'better-sqlite3'];
     }
 
     // 开发模式性能优化
@@ -45,7 +40,6 @@ const nextConfig = {
           '**/.git/**',
           '**/.next/**',
           '**/*.d.ts',
-          '**/data/*.db',          // 忽略数据库文件变化
           '**/useless/**',         // 忽略废弃文件夹
         ],
       };

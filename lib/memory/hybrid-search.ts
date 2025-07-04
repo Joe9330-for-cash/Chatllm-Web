@@ -1,10 +1,9 @@
-import { getMemoryManager } from './manager';
 import { getEmbeddingService } from './embedding-service';
-import { getVectorDatabase, VectorSearchResult } from './vector-database';
+import { getMySQLMemoryDB } from './mysql-database';
 import { Memory } from '@/types/memory';
 
 export interface HybridSearchResult {
-  memory: Memory | VectorSearchResult['memory'];
+  memory: Memory;
   relevanceScore: number;
   searchType: 'keyword' | 'vector' | 'hybrid';
   details: {
@@ -23,9 +22,8 @@ export interface SearchOptions {
 }
 
 export class HybridMemorySearch {
-  private memoryManager = getMemoryManager();
+  private mysqlDB = getMySQLMemoryDB();
   private embeddingService = getEmbeddingService();
-  private vectorDB = getVectorDatabase();
 
   async search(
     userId: string,
@@ -35,7 +33,7 @@ export class HybridMemorySearch {
     const {
       keywordWeight = 0.4,
       vectorWeight = 0.6,
-      threshold = 0.7,  // 提高阈值，确保结果相关性
+      threshold = 0.3,  // 降低阈值，提高搜索召回率
       useVector = true,
       limit = 100  // 大幅增加结果数量，参考OpenAI记忆逻辑
     } = options;
@@ -45,34 +43,28 @@ export class HybridMemorySearch {
     try {
       const results: HybridSearchResult[] = [];
 
-      // 1. 智能关键词搜索
+      // 1. 关键词搜索
       let keywordResults;
       try {
-        keywordResults = await this.memoryManager.searchRelevantMemoriesAsync(
+        keywordResults = await this.mysqlDB.searchMemories(
           userId,
           query,
           limit * 2 // 获取更多结果用于混合
         );
-        console.log(`[HybridSearch] 🧠 智能关键词搜索找到 ${keywordResults.length} 条结果`);
+        console.log(`[HybridSearch] 🧠 关键词搜索找到 ${keywordResults.length} 条结果`);
       } catch (error) {
-        console.warn('[HybridSearch] 智能搜索失败，降级到普通搜索:', error);
-        keywordResults = this.memoryManager.searchRelevantMemories(
-          userId,
-          query,
-          limit * 2
-        );
+        console.warn('[HybridSearch] 关键词搜索失败:', error);
+        keywordResults = [];
       }
-
-      console.log(`[HybridSearch] 关键词搜索找到 ${keywordResults.length} 条结果`);
 
       // 转换关键词搜索结果
       for (const result of keywordResults) {
         results.push({
-          memory: result.memory,
-          relevanceScore: result.relevanceScore * keywordWeight,
+          memory: result as Memory,
+          relevanceScore: (result.relevance_score || 0.5) * keywordWeight,
           searchType: 'keyword',
           details: {
-            keywordScore: result.relevanceScore
+            keywordScore: result.relevance_score || 0.5
           }
         });
       }
@@ -80,15 +72,12 @@ export class HybridMemorySearch {
       // 2. 向量搜索（如果启用）
       if (useVector) {
         try {
-          // 生成查询向量
-          const queryVector = await this.embeddingService.generateEmbedding(query);
-          
-          // 向量搜索
-          const vectorResults = await this.vectorDB.searchSimilarMemories(
+          // 使用MySQL的向量搜索
+          const vectorResults = await this.mysqlDB.vectorSearch(
             userId,
-            queryVector,
+            query,
             limit * 2,
-            0.2 // 向量搜索保持较低阈值，获取更多候选结果
+            0.3 // 向量搜索统一阈值，平衡精度和召回率
           );
 
           console.log(`[HybridSearch] 向量搜索找到 ${vectorResults.length} 条结果`);
@@ -96,7 +85,7 @@ export class HybridMemorySearch {
           // 处理向量搜索结果
           for (const vectorResult of vectorResults) {
             const existingIndex = results.findIndex(r => 
-              this.areSameMemory(r.memory, vectorResult.memory)
+              this.areSameMemory(r.memory, vectorResult as Memory)
             );
 
             if (existingIndex >= 0) {
@@ -116,15 +105,15 @@ export class HybridMemorySearch {
                 }
               };
             } else {
-                             // 添加新的向量搜索结果
-               results.push({
-                 memory: vectorResult.memory,
-                 relevanceScore: vectorResult.similarity * vectorWeight,
-                 searchType: 'vector',
-                 details: {
-                   vectorSimilarity: vectorResult.similarity
-                 }
-               });
+              // 添加新的向量搜索结果
+              results.push({
+                memory: vectorResult as Memory,
+                relevanceScore: vectorResult.similarity * vectorWeight,
+                searchType: 'vector',
+                details: {
+                  vectorSimilarity: vectorResult.similarity
+                }
+              });
             }
           }
 
@@ -147,25 +136,30 @@ export class HybridMemorySearch {
       console.error('[HybridSearch] ❌ 搜索失败:', error);
       
       // 降级到关键词搜索
-      const fallbackResults = this.memoryManager.searchRelevantMemories(userId, query, limit);
-      return fallbackResults.map(result => ({
-        memory: result.memory,
-        relevanceScore: result.relevanceScore,
-        searchType: 'keyword' as const,
-        details: {
-          keywordScore: result.relevanceScore
-        }
-      }));
+      try {
+        const fallbackResults = await this.mysqlDB.searchMemories(userId, query, limit);
+        return fallbackResults.map(result => ({
+          memory: result as Memory,
+          relevanceScore: result.relevance_score || 0.5,
+          searchType: 'keyword' as const,
+          details: {
+            keywordScore: result.relevance_score || 0.5
+          }
+        }));
+      } catch (fallbackError) {
+        console.error('[HybridSearch] 降级搜索也失败:', fallbackError);
+        return [];
+      }
     }
   }
 
-     // 检查是否为同一条记忆
-   private areSameMemory(
-     memory1: Memory | VectorSearchResult['memory'], 
-     memory2: VectorSearchResult['memory']
-   ): boolean {
+  // 检查是否为同一条记忆
+  private areSameMemory(
+    memory1: Memory, 
+    memory2: Memory
+  ): boolean {
     // 优先比较ID
-    if ('id' in memory1 && memory1.id === memory2.id) {
+    if (memory1.id === memory2.id) {
       return true;
     }
     
@@ -209,30 +203,33 @@ export class HybridMemorySearch {
       hybridTotal += Date.now() - hybridStart;
     }
 
-    const recommendations: string[] = [];
+    const avgKeyword = keywordTotal / queries.length;
+    const avgVector = vectorTotal / queries.length;
+    const avgHybrid = hybridTotal / queries.length;
+
+    const recommendations = [];
     
-    if (keywordTotal < vectorTotal * 0.5) {
-      recommendations.push('关键词搜索性能优异，适合实时搜索');
+    if (avgKeyword < avgVector && avgKeyword < avgHybrid) {
+      recommendations.push('关键词搜索速度最快，适合实时查询');
     }
     
-    if (vectorTotal < keywordTotal * 2) {
-      recommendations.push('向量搜索性能良好，推荐启用语义搜索');
+    if (avgVector < avgHybrid * 0.8) {
+      recommendations.push('向量搜索效率较高，建议增加向量权重');
     }
     
-    if (hybridTotal < Math.max(keywordTotal, vectorTotal) * 1.5) {
-      recommendations.push('混合搜索性能平衡，推荐作为默认模式');
+    if (avgHybrid > avgKeyword * 2) {
+      recommendations.push('混合搜索较慢，考虑优化或降低向量权重');
     }
 
     return {
-      keywordPerformance: keywordTotal / queries.length,
-      vectorPerformance: vectorTotal / queries.length,
-      hybridPerformance: hybridTotal / queries.length,
+      keywordPerformance: avgKeyword,
+      vectorPerformance: avgVector,
+      hybridPerformance: avgHybrid,
       recommendations
     };
   }
 }
 
-// 单例实例
 let hybridSearchInstance: HybridMemorySearch | null = null;
 
 export function getHybridSearch(): HybridMemorySearch {

@@ -1,6 +1,7 @@
 import { LLMMemoryExtractor, LLMExtractionResult } from './llm-extractor';
 import { MemoryExtractor } from './extractor';
-import { getMemoryDB } from './database';
+import { getMySQLMemoryDB } from './mysql-database';
+import { getIntelligentCategoryGenerator } from './intelligent-category-generator';
 import { ExtractedMemory, MemorySource } from '@/types/memory';
 
 export interface IntelligentExtractionResult {
@@ -19,15 +20,17 @@ export class IntelligentMemoryManager {
   private llmExtractor: LLMMemoryExtractor;
   private traditionalExtractor: MemoryExtractor;
   private memoryDB: any;
+  private categoryGenerator: any;
   
   // 优化配置选项
   private options = {
     useLLM: true,              // 强制启用LLM提取
     llmFallback: true,         // 启用降级到传统方法
     hybridMode: false,         // 不使用混合模式
-    confidenceThreshold: 0.05, // 进一步降低置信度阈值
+    confidenceThreshold: 0.6,  // 提高置信度阈值到0.6，确保记忆质量
     maxRetries: 2,             // 减少重试次数，避免过度重试
     forceJson: true,           // 强制JSON格式
+    useIntelligentCategories: true, // 启用智能类别生成
   };
 
   constructor(options?: {
@@ -37,10 +40,12 @@ export class IntelligentMemoryManager {
     confidenceThreshold?: number;
     maxRetries?: number;
     forceJson?: boolean;
+    useIntelligentCategories?: boolean;
   }) {
     this.llmExtractor = new LLMMemoryExtractor();
     this.traditionalExtractor = new MemoryExtractor();
-    this.memoryDB = getMemoryDB();
+    this.memoryDB = getMySQLMemoryDB();
+    this.categoryGenerator = getIntelligentCategoryGenerator();
     
     if (options) {
       this.options = { ...this.options, ...options };
@@ -276,47 +281,47 @@ export class IntelligentMemoryManager {
     memories: ExtractedMemory[],
     conversationId?: number
   ): Promise<void> {
-    const { getVectorDatabase } = await import('./vector-database');
-    const { getEmbeddingService } = await import('./embedding-service');
-    
-    const vectorDB = getVectorDatabase();
-    const embeddingService = getEmbeddingService();
-    
     for (const memory of memories) {
       try {
-        // 1. 存储到传统数据库
-        const memoryId = this.memoryDB.insertMemory(
+        let finalCategory = memory.category;
+        
+        // 🧠 使用智能类别生成器优化类别
+        if (this.options.useIntelligentCategories) {
+          try {
+            console.log(`[Intelligent Manager] 🎯 智能优化类别: "${memory.category}" -> 内容: "${memory.content.substring(0, 50)}..."`);
+            finalCategory = await this.categoryGenerator.generateCategory(memory.content);
+            
+            if (finalCategory !== memory.category) {
+              console.log(`[Intelligent Manager] ✨ 类别优化: "${memory.category}" → "${finalCategory}"`);
+            } else {
+              console.log(`[Intelligent Manager] ✅ 类别保持不变: "${finalCategory}"`);
+            }
+          } catch (categoryError) {
+            console.warn(`[Intelligent Manager] ⚠️ 智能类别生成失败，使用原始类别:`, categoryError);
+            finalCategory = memory.category || 'other';
+          }
+        }
+        
+        // 检查MySQL连接状态
+        if (!this.memoryDB.isConnectionAvailable()) {
+          console.warn('[Intelligent Manager] ⚠️ MySQL数据库未连接，跳过存储记忆');
+          continue;
+        }
+        
+        // 使用MySQL数据库存储记忆
+        const memoryId = await this.memoryDB.addMemory(
           userId,
           memory.content,
-          memory.category,
-          memory.tags,
-          'conversation' as MemorySource,
+          finalCategory,
           memory.importance,
-          conversationId,
-          memory.extractedFrom
+          memory.tags || []
         );
-        console.log(`[Intelligent Manager] 存储记忆 ${memoryId}: [${memory.category}] ${memory.content}`);
         
-        // 2. 同时进行向量化存储
-        try {
-          const vector = await embeddingService.generateEmbedding(memory.content);
-          await vectorDB.storeMemoryVector(
-            userId,
-            memory.content,
-            vector,
-            memory.category,
-            {
-              tags: memory.tags,
-              importance: memory.importance,
-              extractedFrom: memory.extractedFrom,
-              conversationId,
-              traditionalId: memoryId // 关联传统数据库的ID
-            }
-          );
-          console.log(`[Intelligent Manager] ✅ 向量化存储完成 ID: ${memoryId}`);
-        } catch (vectorError) {
-          console.error(`[Intelligent Manager] ⚠️  向量化存储失败 ID: ${memoryId}:`, vectorError);
-          // 向量化失败不影响传统存储
+        if (memoryId > 0) {
+          console.log(`[Intelligent Manager] 存储记忆 ${memoryId}: [${finalCategory}] ${memory.content}`);
+          console.log(`[Intelligent Manager] ✅ 成功存储记忆 ID: ${memoryId}`);
+        } else {
+          console.warn(`[Intelligent Manager] ⚠️ 记忆存储失败，ID: ${memoryId}`);
         }
         
       } catch (error) {

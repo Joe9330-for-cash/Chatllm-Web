@@ -1,7 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { getEmbeddingService } from '@/lib/memory/embedding-service';
-import { getVectorDatabase } from '@/lib/memory/vector-database';
-import { getMemoryDB } from '@/lib/memory/database';
+import { getMySQLMemoryDB } from '@/lib/memory/mysql-database';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
@@ -19,8 +18,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.log(`[Vector Search API] 🔍 开始向量化搜索...`);
 
     const embeddingService = getEmbeddingService();
-    const vectorDB = getVectorDatabase();
-    const memoryDB = getMemoryDB();
+    const mysqlDB = getMySQLMemoryDB();
     
     const results = [];
     let searchType = 'mixed';
@@ -31,9 +29,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const queryVector = await embeddingService.generateEmbedding(query as string);
       
       console.log(`[Vector Search API] 🔍 执行向量相似性搜索...`);
-      const vectorResults = await vectorDB.searchSimilarMemories(
+      const vectorResults = await mysqlDB.vectorSearch(
         userId as string,
-        queryVector,
+        query as string,
         parseInt(limit as string) * 2,
         0.3 // 较低的相似性阈值
       );
@@ -43,16 +41,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // 转换向量搜索结果
       for (const vectorResult of vectorResults) {
         results.push({
-          id: vectorResult.memory.id,
-          content: vectorResult.memory.content,
-          category: vectorResult.memory.category,
-          importance: (vectorResult.memory as any).importance || 5,
-          timestamp: (vectorResult.memory as any).timestamp || (vectorResult.memory as any).createdAt,
-          relevanceScore: vectorResult.similarity,
+          id: vectorResult.id,
+          content: vectorResult.content,
+          category: vectorResult.category,
+          importance: vectorResult.importance,
+          timestamp: vectorResult.timestamp,
+          relevanceScore: vectorResult.similarity || vectorResult.relevance_score || 0.5,
           searchType: 'vector',
           details: {
-            vectorSimilarity: vectorResult.similarity,
-            distance: vectorResult.distance
+            vectorSimilarity: vectorResult.similarity || vectorResult.relevance_score || 0.5
           }
         });
       }
@@ -66,7 +63,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       try {
         console.log(`[Vector Search API] 🔤 补充关键词搜索...`);
         
-        const keywordResults = memoryDB.searchMemories(
+        const keywordResults = await mysqlDB.searchMemories(
           userId as string,
           query as string,
           parseInt(limit as string) * 2
@@ -83,8 +80,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               content: memory.content,
               category: memory.category,
               importance: memory.importance,
-              timestamp: memory.createdAt,
-              relevanceScore: 0.5, // 关键词搜索的默认相关性
+              timestamp: memory.timestamp,
+              relevanceScore: memory.relevance_score || 0.5, // 关键词搜索的相关性
               searchType: 'keyword',
               details: {
                 keywordScore: 0.5
