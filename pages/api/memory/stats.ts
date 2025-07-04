@@ -1,5 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { getMemoryManager } from '@/lib/memory/manager';
+import { getMySQLMemoryDB } from '@/lib/memory/mysql-database';
 
 export default async function handler(
   req: NextApiRequest,
@@ -20,8 +20,8 @@ export default async function handler(
 
     console.log(`[Memory API] 获取记忆统计 - 用户: ${userId}`);
 
-    const memoryManager = getMemoryManager();
-    const stats = memoryManager.getMemoryStats(userId as string);
+    const mysqlDB = getMySQLMemoryDB();
+    const stats = await mysqlDB.getMemoryStats(userId as string);
 
     console.log(`[Memory API] ✅ 统计获取完成`);
 
