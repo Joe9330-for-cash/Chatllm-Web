@@ -14,7 +14,8 @@ export class MySQLMemoryDatabase {
         user: 'root',
         password: '', // 目前无密码
         database: 'chatllm_memories',
-        charset: 'utf8mb4'
+        charset: 'utf8mb4',
+        collation: 'utf8mb4_unicode_ci'
       });
 
       console.log('✅ MySQL连接成功');
@@ -106,10 +107,14 @@ export class MySQLMemoryDatabase {
   // 搜索记忆
   async searchMemories(userId: string, query: string, limit: number = 10): Promise<any[]> {
     const conn = await this.getConnection();
+    console.log(`[MySQL搜索] 用户: ${userId}, 查询: "${query}", 长度: ${query.length}`);
+    
     const [rows] = await conn.execute(
       'SELECT * FROM memories WHERE userId = ? AND (content LIKE ? OR tags LIKE ?) ORDER BY importance DESC, timestamp DESC LIMIT ?',
       [userId, `%${query}%`, `%${query}%`, limit]
     );
+    
+    console.log(`[MySQL搜索] 查询结果: ${(rows as any[]).length} 条记录`);
     return rows as any[];
   }
 
