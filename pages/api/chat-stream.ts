@@ -195,7 +195,6 @@ export default async function handler(
     const reader = response.body?.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    let contentBuffer = ''; // 内容缓冲区，用于批量发送
     let lastFlushTime = Date.now();
     let totalTokens = 0; // Token统计
     let generatedTokens = 0; // 新增：实际生成的token数（completion + reasoning）
@@ -211,22 +210,12 @@ export default async function handler(
       return;
     }
 
-    const flushBuffer = () => {
-      if (contentBuffer) {
-        res.write(`data: ${JSON.stringify({ 
-          content: contentBuffer,
-          model: model 
-        })}\n\n`);
-        contentBuffer = '';
-        lastFlushTime = Date.now();
-      }
-    };
+    // 不再需要缓冲函数，直接实时发送
 
     while (true) {
       const { value, done } = await reader.read();
       if (done) {
-        // 发送剩余缓冲内容
-        flushBuffer();
+        // 流式数据读取完成
         break;
       }
 
@@ -239,7 +228,7 @@ export default async function handler(
         if (line.startsWith('data: ')) {
           const dataStr = line.slice(6);
           if (dataStr.trim() === '[DONE]') {
-            flushBuffer(); // 发送剩余内容
+            // 流式输出完成
             
             // 记录响应完成时间
             performanceTracker.responseComplete = Date.now();
@@ -349,17 +338,12 @@ export default async function handler(
                   firstContentReceived = true;
                 }
                 
-                contentBuffer += delta.content;
-                
-                // 优化流畅度：更小的缓冲和更短的间隔
-                const flushThreshold = model === 'gemini-2.5-pro' ? 3 : 1; // 更小的缓冲，提升流畅度
-                const flushInterval = model === 'gemini-2.5-pro' ? 20 : 10; // 更短的间隔
-                
-                // 当缓冲区达到阈值或超过时间间隔时发送
-                if (contentBuffer.length >= flushThreshold || 
-                    Date.now() - lastFlushTime > flushInterval) {
-                  flushBuffer();
-                }
+                // 🚀 真正的流式输出：立即发送每个字符，不缓冲
+                res.write(`data: ${JSON.stringify({ 
+                  content: delta.content,
+                  model: model 
+                })}\n\n`);
+                lastFlushTime = Date.now();
               }
             }
           } catch (e) {
