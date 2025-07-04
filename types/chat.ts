@@ -11,6 +11,7 @@ export type Message = {
   statsText?: string;
   reasoning?: string; // 新增：思考过程（DeepSeek R1专用）
   model?: string; // 新增：该消息使用的模型
+  actualModel?: string; // 新增：智能路由时实际使用的模型
   responseTime?: number; // 新增：响应时间(毫秒)
   tokens?: {
     prompt_tokens?: number;

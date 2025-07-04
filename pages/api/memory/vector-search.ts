@@ -25,9 +25,9 @@ export default async function handler(
     const { 
       userId, 
       query, 
-      limit = 100, // 参考OpenAI记忆逻辑，大幅增加默认结果数量
+      limit = 50, // 优化：减少搜索范围，提高性能
       mode = 'hybrid',
-      threshold = 0.7, // 提高相关性阈值，确保结果质量
+      threshold = 0.75, // 优化：提高相关性阈值，减少无用结果
       keywordWeight = 0.4,
       vectorWeight = 0.6
     } = req.query;

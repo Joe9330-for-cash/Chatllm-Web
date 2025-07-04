@@ -1,5 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { SUPPORTED_MODELS, SupportedModel } from './chat';
+import ModelRouter from '../../lib/model-router';
 import https from 'https';
 
 // 改进的HTTPS代理配置，包含连接池和超时设置
@@ -41,6 +42,7 @@ interface ChatMessage {
 interface ChatRequest {
   model: SupportedModel;
   messages: ChatMessage[];
+  enableSmartRouting?: boolean; // 新增：启用智能路由选项
 }
 
 export default async function handler(
@@ -55,8 +57,34 @@ export default async function handler(
   
   try {
     const requestData: ChatRequest = req.body;
-    model = requestData.model;
+    const originalModel = requestData.model;
     const messages = requestData.messages;
+    const enableSmartRouting = requestData.enableSmartRouting ?? true; // 默认启用智能路由
+    
+    // 获取模型路由器实例
+    const modelRouter = ModelRouter.getInstance();
+    
+    // 智能模型选择
+    if (enableSmartRouting && messages.length > 0) {
+      const userMessage = messages[messages.length - 1];
+      if (userMessage.role === 'user') {
+        const suggestedModel = modelRouter.selectOptimalModel(userMessage.content);
+        if (suggestedModel !== originalModel) {
+          console.log(`[Smart Router] 🎯 智能路由: ${originalModel} -> ${suggestedModel}`);
+          model = suggestedModel;
+        } else {
+          console.log(`[Smart Router] ✅ 保持原选择: ${originalModel}`);
+          model = originalModel;
+        }
+      } else {
+        model = originalModel;
+      }
+    } else {
+      model = originalModel;
+    }
+    
+    // 获取模型专属配置
+    const modelConfig = modelRouter.getModelConfig(model);
 
     // 验证模型是否支持
     if (!SUPPORTED_MODELS[model]) {
@@ -120,13 +148,16 @@ export default async function handler(
         }
         
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超时
+        const timeoutId = setTimeout(() => controller.abort(), modelConfig.timeout); // 使用模型配置的超时时间
         
         const response = await fetch(url, {
           ...options,
           signal: controller.signal,
           // @ts-ignore - 开发环境SSL配置
           ...(process.env.NODE_ENV === 'development' && { agent: httpsAgent }),
+          // 网络连接优化
+          keepalive: true, // 保持连接活跃
+          cache: 'no-cache', // 禁用缓存，确保实时性
         });
         
         clearTimeout(timeoutId);
@@ -157,20 +188,20 @@ export default async function handler(
         'Authorization': `Bearer ${apiKey}`,
         'User-Agent': 'ChatLLM-Web/1.0',
         'Connection': 'keep-alive',
+        'Accept': 'text/event-stream', // 明确接受事件流
+        'Cache-Control': 'no-cache', // 禁用缓存
+        'Accept-Encoding': 'gzip, deflate', // 启用压缩
       },
       body: JSON.stringify({
         model: SUPPORTED_MODELS[model],
         messages, // 直接传递用户的messages，不添加额外的system prompt
         stream: true, // 启用流式输出
-        max_tokens: 8000, // 增加最大token数，支持更长回答
-        temperature: 0.7, // 适中的温度设置
-        stream_options: { include_usage: true }, // 为所有模型启用使用量统计
-        ...(model === 'gemini-2.5-pro' && {
-          // 为Gemini特别优化的参数
-          top_p: 0.9,
-          frequency_penalty: 0,
-          presence_penalty: 0,
-        }),
+        max_tokens: modelConfig.max_tokens, // 使用模型配置的最大token数
+        temperature: modelConfig.temperature, // 使用模型配置的温度
+        top_p: modelConfig.top_p,
+        frequency_penalty: modelConfig.frequency_penalty,
+        presence_penalty: modelConfig.presence_penalty,
+        stream_options: modelConfig.stream_options, // 使用模型配置的流选项
       }),
     });
 
@@ -184,12 +215,14 @@ export default async function handler(
 
     console.log(`[Stream API] ✅ ${model}: 开始接收流式数据`);
 
-    // 发送思考开始信号给前端
-    res.write(`data: ${JSON.stringify({ 
-      type: 'thinking_start',
-      model: model,
-      timestamp: Date.now()
-    })}\n\n`);
+    // 发送思考开始信号给前端 - DeepSeek R1专项优化
+    if (model === 'deepseek-r1') {
+      res.write(`data: ${JSON.stringify({ 
+        type: 'thinking_start',
+        model: model,
+        timestamp: Date.now()
+      })}\n\n`);
+    }
 
     // 处理流式响应
     const reader = response.body?.getReader();
@@ -271,6 +304,15 @@ export default async function handler(
             
             console.log(`[Stream API] ✅ ${model}: 流式输出完成，耗时: ${responseTime}ms, Generated: ${generatedTokens}, Total: ${totalTokens}`);
             
+            // 更新模型性能统计
+            if (enableSmartRouting && messages.length > 0) {
+              const userMessage = messages[messages.length - 1];
+              if (userMessage.role === 'user') {
+                const contentHash = modelRouter.selectOptimalModel(userMessage.content); // 重新生成hash用于统计
+                modelRouter.updateModelPerformance(model, contentHash, responseTime, true);
+              }
+            }
+            
             res.write(`data: ${JSON.stringify({ 
               done: true, 
               responseTime,
@@ -286,7 +328,10 @@ export default async function handler(
                 generated_tokens: generatedTokens,
                 reasoning_tokens: reasoningTokens
               },
-              model
+              model,
+              originalModel, // 新增：原始请求的模型
+              smartRouting: enableSmartRouting, // 新增：智能路由状态
+              routerStats: modelRouter.getStats() // 新增：路由器统计信息
             })}\n\n`);
             res.end();
             return;
@@ -332,13 +377,18 @@ export default async function handler(
             }
             
             if (delta) {
-              // 处理思考过程（DeepSeek R1专用）
+              // 处理思考过程（DeepSeek R1专用）- 优化版本
               if (delta.reasoning && model === 'deepseek-r1') {
-                res.write(`data: ${JSON.stringify({ 
-                  type: 'reasoning',
-                  content: delta.reasoning,
-                  model: model 
-                })}\n\n`);
+                // 优化：批量发送思考过程，减少网络往返
+                const reasoningChunks = delta.reasoning.split('\n').filter((chunk: string) => chunk.trim());
+                if (reasoningChunks.length > 0) {
+                  res.write(`data: ${JSON.stringify({ 
+                    type: 'reasoning',
+                    content: reasoningChunks.join('\n'),
+                    model: model,
+                    chunks: reasoningChunks.length
+                  })}\n\n`);
+                }
               }
               
               // 处理最终回答内容
@@ -351,9 +401,9 @@ export default async function handler(
                 
                 contentBuffer += delta.content;
                 
-                // 优化流畅度：更小的缓冲和更短的间隔
-                const flushThreshold = model === 'gemini-2.5-pro' ? 3 : 1; // 更小的缓冲，提升流畅度
-                const flushInterval = model === 'gemini-2.5-pro' ? 20 : 10; // 更短的间隔
+                // 使用模型路由器的流式配置
+                const flushThreshold = modelConfig.flushThreshold || 1;
+                const flushInterval = modelConfig.flushInterval || 10;
                 
                 // 当缓冲区达到阈值或超过时间间隔时发送
                 if (contentBuffer.length >= flushThreshold || 

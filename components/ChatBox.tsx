@@ -128,12 +128,16 @@ const shouldSubmit = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
 };
 
 // 流式消息组件，专门用于优化渲染性能
-const StreamingMessage = React.memo(({ content, currentModel, modelStatus }: { 
+const StreamingMessage = React.memo(({ content, currentModel, modelStatus, actualModel }: { 
   content: string, 
   currentModel: string, 
-  modelStatus: Record<string, boolean> 
+  modelStatus: Record<string, boolean>,
+  actualModel?: string
 }) => {
   console.log(`[StreamingMessage] 重新渲染，内容长度: ${content.length}`);
+  
+  // 显示实际使用的模型，如果有的话
+  const displayModel = actualModel || currentModel;
   
   return (
     <div className="chat chat-start">
@@ -152,9 +156,12 @@ const StreamingMessage = React.memo(({ content, currentModel, modelStatus }: {
           💬 正在回答...
         </time>
         <span className="text-xs opacity-50 mx-2">
-          {currentModel} 
-          {modelStatus[currentModel] === true && ' ✅'}
-          {modelStatus[currentModel] === false && ' ❌'}
+          {MODEL_OPTIONS.find(opt => opt.value === displayModel)?.label || displayModel}
+          {actualModel && actualModel !== currentModel && (
+            <span className="text-primary"> (智能选择)</span>
+          )}
+          {modelStatus[displayModel] === true && ' ✅'}
+          {modelStatus[displayModel] === false && ' ❌'}
         </span>
       </div>
       <div className="chat-bubble">
@@ -181,8 +188,9 @@ const StreamingMessage = React.memo(({ content, currentModel, modelStatus }: {
 export function ChatBox() {
   const [userInput, setUserInput] = useState('');
   const [modelStatus, setModelStatus] = useState<Record<string, boolean>>({});
-  const [useStreaming, setUseStreaming] = useState(true);
+  const [smartRouting, setSmartRouting] = useState(true); // 替换 useStreaming
   const [hasTestedModels, setHasTestedModels] = useState(false);
+  const [actualModel, setActualModel] = useState<string | undefined>(); // 记录实际使用的模型
 
   const [curConversationIndex, currentModel, setCurrentModel] = useChatStore((state) => [
     state.curConversationIndex,
@@ -274,21 +282,18 @@ export function ChatBox() {
   }, [hasTestedModels]); // 添加依赖数组
 
   const submitUserInput = async () => {
-    if (userInput.length <= 0) return;
+    if (userInput.trim() === '') return;
     
-    const inputContent = userInput;
-    // 立即清空输入框，避免重复提交
+    console.log('[Submit] 开始提交用户输入:', userInput);
+    
+    // 重置实际模型状态
+    setActualModel(undefined);
+    
+    // 调用流式输入方法，传递智能路由参数
+    await chatStore.onUserInputContentStream(userInput, smartRouting);
+    
     setUserInput('');
-    
-    if (useStreaming) {
-      console.log(`[前端] 发送流式消息，模型: ${currentModel}`);
-      await chatStore.onUserInputContentStream(inputContent);
-    } else {
-      chatStore.onUserInputContent(inputContent);
-    }
-    
-    scrollToBottom();
-    setAutoScroll(true);
+    console.log('[Submit] 用户输入提交完成');
   };
 
   const onInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -298,6 +303,12 @@ export function ChatBox() {
   };
 
   const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    // 智能路由模式下不允许手动选择模型
+    if (smartRouting) {
+      e.preventDefault();
+      return;
+    }
+    
     const newModel = e.target.value as SupportedModel;
     console.log('[Model Switch] 从', currentModel, '切换到', newModel);
     
@@ -340,6 +351,14 @@ export function ChatBox() {
     });
   };
 
+  // 监听流式统计信息，获取实际使用的模型
+  useEffect(() => {
+    const stats = chatStore.streamingStats;
+    if (stats?.model && stats.model !== currentModel) {
+      setActualModel(stats.model);
+    }
+  }, [chatStore.streamingStats, currentModel]);
+
   return (
     <>
       <div className="top-0 p-2 flex flex-col relative max-h-[100vh] h-[100vh]">
@@ -355,16 +374,16 @@ export function ChatBox() {
           </div>
 
           <div className="flex items-center gap-4">
-            {/* 流式输出开关 */}
+            {/* 智能路由开关 */}
             <div className="flex items-center gap-2">
               <label className="text-sm font-medium text-base-content opacity-70">
-                流式:
+                智能选择:
               </label>
               <input 
                 type="checkbox" 
-                className="toggle toggle-sm" 
-                checked={useStreaming}
-                onChange={(e) => setUseStreaming(e.target.checked)}
+                className="toggle toggle-sm toggle-primary" 
+                checked={smartRouting}
+                onChange={(e) => setSmartRouting(e.target.checked)}
               />
             </div>
             
@@ -374,9 +393,11 @@ export function ChatBox() {
                 模型:
               </label>
               <select 
-                className="select select-bordered select-sm w-48" 
+                className={`select select-bordered select-sm w-48 ${smartRouting ? 'select-disabled opacity-50' : ''}`}
                 value={currentModel}
                 onChange={handleModelChange}
+                disabled={smartRouting}
+                title={smartRouting ? '智能路由模式下将自动选择最适合的模型' : '选择要使用的模型'}
               >
                 {MODEL_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value} title={option.description}>
@@ -386,6 +407,11 @@ export function ChatBox() {
                   </option>
                 ))}
               </select>
+              {smartRouting && (
+                <span className="text-xs text-primary opacity-70">
+                  🤖 自动选择
+                </span>
+              )}
             </div>
 
             {/* 原有的操作按钮 */}
@@ -445,9 +471,13 @@ export function ChatBox() {
                 </time>
                 {item.type === 'assistant' && (
                   <span className="text-xs opacity-50 mx-2">
-                    {item.model || chatStore.curConversation()?.model || currentModel}
-                    {modelStatus[item.model || chatStore.curConversation()?.model || currentModel] === true && ' ✅'}
-                    {modelStatus[item.model || chatStore.curConversation()?.model || currentModel] === false && ' ❌'}
+                    {/* 显示实际使用的模型 */}
+                    {MODEL_OPTIONS.find(opt => opt.value === (item.actualModel || item.model || chatStore.curConversation()?.model || currentModel))?.label || (item.actualModel || item.model || chatStore.curConversation()?.model || currentModel)}
+                    {item.actualModel && item.actualModel !== (item.model || chatStore.curConversation()?.model || currentModel) && (
+                      <span className="text-primary"> (智能选择)</span>
+                    )}
+                    {modelStatus[item.actualModel || item.model || chatStore.curConversation()?.model || currentModel] === true && ' ✅'}
+                    {modelStatus[item.actualModel || item.model || chatStore.curConversation()?.model || currentModel] === false && ' ❌'}
                   </span>
                 )}
               </div>
@@ -497,7 +527,11 @@ export function ChatBox() {
                       {streamingReasoning ? '🧠 深度思考中...' : '🤔 正在思考...'}
                     </h3>
                     <div className="text-xs opacity-75">
-                      {currentModel} {streamingReasoning ? '- 思考过程可见' : '- 准备回答'}
+                      {MODEL_OPTIONS.find(opt => opt.value === (actualModel || currentModel))?.label || (actualModel || currentModel)}
+                      {actualModel && actualModel !== currentModel && (
+                        <span className="text-primary"> (智能选择)</span>
+                      )}
+                      {streamingReasoning ? ' - 思考过程可见' : ' - 准备回答'}
                     </div>
                   </div>
                 </div>
@@ -523,9 +557,12 @@ export function ChatBox() {
                   {isThinking && !streamingMessage ? '🧠 深度思考中...' : '💬 正在回答...'}
                 </time>
                 <span className="text-xs opacity-50 mx-2">
-                  {currentModel} 
-                  {modelStatus[currentModel] === true && ' ✅'}
-                  {modelStatus[currentModel] === false && ' ❌'}
+                  {MODEL_OPTIONS.find(opt => opt.value === (actualModel || currentModel))?.label || (actualModel || currentModel)}
+                  {actualModel && actualModel !== currentModel && (
+                    <span className="text-primary"> (智能选择)</span>
+                  )}
+                  {modelStatus[actualModel || currentModel] === true && ' ✅'}
+                  {modelStatus[actualModel || currentModel] === false && ' ❌'}
                 </span>
               </div>
               <div className="chat-bubble">
@@ -575,7 +612,7 @@ export function ChatBox() {
           <div className="bg-base-100 flex items-center justify-center h-full z-30">
             <textarea
               className="textarea textarea-primary textarea-bordered textarea-sm w-[50%]"
-              placeholder={`${useStreaming ? '🔄 流式模式' : '📝 普通模式'} - Ctrl + Enter 发送消息`}
+              placeholder={`${smartRouting ? '🤖 智能路由模式' : '🎯 固定模型模式'} - Ctrl + Enter 发送消息`}
               value={userInput}
               onInput={(e) => onInput(e.currentTarget.value)}
               onFocus={() => setAutoScroll(true)}
@@ -598,11 +635,11 @@ export function ChatBox() {
           {/* 状态指示器 */}
           <div className="text-center text-xs opacity-60 mt-1">
             {isThinking && !streamingMessage && !streamingReasoning && '🤔 正在思考...'}
-            {streamingReasoning && !streamingMessage && currentModel === 'deepseek-r1' && '🧠 DeepSeek R1 深度思考中...'}
+            {streamingReasoning && !streamingMessage && (actualModel || currentModel) === 'deepseek-r1' && '🧠 DeepSeek R1 深度思考中...'}
             {isStreaming && streamingMessage && '🔄 正在生成回复...'}
-            {useStreaming && !isStreaming && '⚡ 流式输出已启用'}
-            {!useStreaming && !isStreaming && '📝 普通模式'}
-            {currentModel === 'deepseek-r1' && useStreaming && !isStreaming && ' | 💭 思考过程可见'}
+            {smartRouting && !isStreaming && '🤖 智能路由已启用 - 自动选择最适合的模型'}
+            {!smartRouting && !isStreaming && `🎯 固定模型模式 - 使用 ${MODEL_OPTIONS.find(opt => opt.value === currentModel)?.label || currentModel}`}
+            {(actualModel || currentModel) === 'deepseek-r1' && smartRouting && !isStreaming && ' | 💭 支持思考过程可见'}
           </div>
         </div>
       </div>

@@ -90,7 +90,7 @@ export interface ChatStore {
   delAllConversations: () => void;
   curConversation: () => ChatConversation;
   onUserInputContent: (content: string) => Promise<void>;
-  onUserInputContentStream: (content: string) => Promise<void>; // 新增：流式输入方法
+  onUserInputContentStream: (content: string, enableSmartRouting?: boolean) => Promise<void>; // 新增：流式输入方法
   getMemoryMsgs: () => Message[];
   updateCurConversation: (
     updater: (conversation: ChatConversation) => void,
@@ -256,7 +256,7 @@ export const useChatStore = create<ChatStore>()(
               console.log(`[Memory] [非流式] 用户总记忆数: ${statsData.stats?.totalMemories || 0}`);
               
               // 搜索相关记忆
-              const searchUrl = `/api/memory/vector-search?userId=${get().userId}&query=${encodeURIComponent(content)}&limit=100`;
+              const searchUrl = `/api/memory/vector-search?userId=${get().userId}&query=${encodeURIComponent(content)}&limit=50`;
               console.log(`[Memory] 向量搜索URL: ${searchUrl}`);
               
               const response = await fetch(searchUrl);
@@ -427,7 +427,7 @@ export const useChatStore = create<ChatStore>()(
       },
 
       // 新增：流式输入处理方法
-      async onUserInputContentStream(content) {
+      async onUserInputContentStream(content, enableSmartRouting = true) {
         // 获取当前模型和开始时间
         const currentModel = get().currentModel;
         const startTime = Date.now(); // 记录开始时间
@@ -475,85 +475,146 @@ export const useChatStore = create<ChatStore>()(
 
             console.log('[Stream API Call] 当前选择的模型:', currentModel);
             
-            // 记忆功能：搜索相关记忆并添加到上下文
-            console.log(`[Memory Debug] 记忆功能状态: ${get().memoryEnabled ? '启用' : '禁用'}`);
-            console.log(`[Memory Debug] 用户ID: ${get().userId}`);
+            // 并行处理架构：记忆搜索、LLM预连接、消息准备并行进行
+            console.log(`[并行架构] 🚀 启动三重并行处理 - 记忆功能: ${get().memoryEnabled ? '启用' : '禁用'}`);
+            const parallelStartTime = Date.now();
             
-            if (get().memoryEnabled) {
+            // 并行任务1：记忆搜索（异步）
+            const memorySearchPromise = get().memoryEnabled ? (async () => {
               try {
-                console.log('[Memory] 开始搜索相关记忆...');
-                console.log(`[Memory] 搜索查询: "${content}"`);
+                console.log('[并行Memory] 🚀 开始异步记忆搜索...');
+                const memoryStartTime = Date.now();
                 
-                // 先尝试获取用户的所有记忆作为备选
-                const statsResponse = await fetch(`/api/memory/stats?userId=${get().userId}`);
-                const statsData = await statsResponse.json();
-                console.log(`[Memory] 用户总记忆数: ${statsData.stats?.totalMemories || 0}`);
+                // 并行执行统计和搜索
+                const [statsResponse, searchResponse] = await Promise.all([
+                  fetch(`/api/memory/stats?userId=${get().userId}`),
+                  fetch(`/api/memory/vector-search?userId=${get().userId}&query=${encodeURIComponent(content)}&limit=50`)
+                ]);
                 
-                // 搜索相关记忆
-                const searchUrl = `/api/memory/vector-search?userId=${get().userId}&query=${encodeURIComponent(content)}&limit=100`;
-                console.log(`[Memory] 向量搜索URL: ${searchUrl}`);
+                const [statsData, searchData] = await Promise.all([
+                  statsResponse.json(),
+                  searchResponse.json()
+                ]);
                 
-                const response = await fetch(searchUrl);
-                const data = await response.json();
-                console.log(`[Memory] 搜索响应:`, data);
+                const memoryTime = Date.now() - memoryStartTime;
+                console.log(`[并行Memory] ⏱️ 记忆搜索耗时: ${memoryTime}ms`);
+                console.log(`[并行Memory] 搜索到 ${searchData.results?.length || 0} 条记忆`);
                 
-                if (data.success && data.results && data.results.length > 0) {
-                  const memoryTexts = data.results.map((result: any) => 
+                if (searchData.success && searchData.results && searchData.results.length > 0) {
+                  const memoryTexts = searchData.results.map((result: any) => 
                     `[${result.memory.category}] ${result.memory.content} (相关性:${(result.relevanceScore * 100).toFixed(1)}%)`
                   );
                   const memoryContext = `基于我对用户的了解：\n${memoryTexts.join('\n')}\n\n请结合这些信息来回答用户的问题。`;
                   
-                  recentMsgs.unshift({
+                  console.log(`[并行Memory] ✅ 成功准备 ${searchData.results.length} 条相关记忆`);
+                  return {
                     role: 'system' as const,
                     content: memoryContext,
-                  });
-                  console.log(`[Memory] ✅ 添加了 ${data.results.length} 条相关记忆到上下文`);
-                } else {
-                  console.log('[Memory] 未找到相关记忆，尝试获取最重要的记忆作为上下文');
+                  };
+                } else if (statsData.stats?.totalMemories > 0) {
+                  // 备选记忆策略
+                  const fallbackResponse = await fetch(`/api/memory/manage?userId=${get().userId}&limit=3`);
+                  const fallbackData = await fallbackResponse.json();
                   
-                  // 如果搜索无果，尝试获取最重要的记忆
-                  if (statsData.stats?.totalMemories > 0) {
-                    const fallbackResponse = await fetch(`/api/memory/manage?userId=${get().userId}&limit=3`);
-                    const fallbackData = await fallbackResponse.json();
+                  if (fallbackData.success && fallbackData.memories?.length > 0) {
+                    const fallbackTexts = fallbackData.memories.map((memory: any) => 
+                      `[${memory.category}] ${memory.content}`
+                    );
+                    const fallbackContext = `我了解到关于用户的一些信息：\n${fallbackTexts.join('\n')}\n\n请适当参考这些信息。`;
                     
-                    if (fallbackData.success && fallbackData.memories?.length > 0) {
-                      const fallbackTexts = fallbackData.memories.map((memory: any) => 
-                        `[${memory.category}] ${memory.content}`
-                      );
-                      const fallbackContext = `我了解到关于用户的一些信息：\n${fallbackTexts.join('\n')}\n\n请适当参考这些信息。`;
-                      
-                      recentMsgs.unshift({
-                        role: 'system' as const,
-                        content: fallbackContext,
-                      });
-                      console.log(`[Memory] ✅ 使用备选记忆 ${fallbackData.memories.length} 条`);
-                    }
+                    console.log(`[并行Memory] ✅ 使用备选记忆 ${fallbackData.memories.length} 条`);
+                    return {
+                      role: 'system' as const,
+                      content: fallbackContext,
+                    };
                   }
                 }
+                
+                return null;
               } catch (memoryError) {
-                console.warn('[Memory] 记忆搜索失败，继续正常对话:', memoryError);
+                console.warn('[并行Memory] ❌ 记忆搜索失败:', memoryError);
+                return null;
               }
-            } else {
-              console.log('[Memory] ⚠️ 记忆功能已禁用，跳过记忆搜索');
-            }
-            
-            // 如果是新对话或者刚切换了模型，添加明确的身份指导
-            const hasModelContext = recentMsgs.some(msg => 
-              msg.content.includes('我是') || msg.content.includes('I am')
-            );
-            
-            if (!hasModelContext) {
-              // 为不同模型添加适当的上下文提示
-              const contextPrompt = getModelContextPrompt(currentModel);
-              if (contextPrompt) {
-                recentMsgs.unshift({
-                  role: 'system' as const,
-                  content: contextPrompt,
-                });
+            })() : Promise.resolve(null);
+
+            // 并行任务2：准备基础消息和模型上下文
+            const prepareMessagesTask = (async () => {
+              console.log('[并行Messages] 🔧 开始准备消息队列...');
+              // 如果是新对话或者刚切换了模型，添加明确的身份指导
+              const hasModelContext = recentMsgs.some(msg => 
+                msg.content.includes('我是') || msg.content.includes('I am')
+              );
+              
+              if (!hasModelContext) {
+                // 为不同模型添加适当的上下文提示
+                const contextPrompt = getModelContextPrompt(currentModel);
+                if (contextPrompt) {
+                  recentMsgs.unshift({
+                    role: 'system' as const,
+                    content: contextPrompt,
+                  });
+                }
               }
+              
+              console.log('[并行Messages] ✅ 消息队列准备完成');
+              return recentMsgs;
+            })();
+
+            // 并行任务3：LLM连接预热（DNS预解析和连接建立）
+            const llmPreconnectTask = (async () => {
+              try {
+                console.log('[并行LLM] 🔗 开始LLM连接预热...');
+                const preconnectStartTime = Date.now();
+                
+                // 发送一个轻量级的预热请求（仅建立连接，不等待完整响应）
+                const preconnectController = new AbortController();
+                const preconnectTimeout = setTimeout(() => preconnectController.abort(), 3000); // 3秒预连接超时
+                
+                try {
+                  const preconnectResponse = await fetch('/api/test-models', {
+                    method: 'GET',
+                    signal: preconnectController.signal,
+                    headers: {
+                      'Connection': 'keep-alive',
+                      'Cache-Control': 'no-cache',
+                    },
+                  });
+                  
+                  clearTimeout(preconnectTimeout);
+                  const preconnectTime = Date.now() - preconnectStartTime;
+                  console.log(`[并行LLM] ✅ 连接预热完成，耗时: ${preconnectTime}ms`);
+                  return true;
+                } catch (preconnectError: any) {
+                  clearTimeout(preconnectTimeout);
+                  console.log(`[并行LLM] ⚠️ 连接预热失败，将使用常规连接: ${preconnectError.message}`);
+                  return false;
+                }
+              } catch (error) {
+                console.log(`[并行LLM] ❌ 预连接任务异常: ${error}`);
+                return false;
+              }
+            })();
+
+            // 等待三个并行任务完成
+            console.log('[并行架构] 🔄 等待三重并行任务完成...');
+            const [memoryContext, preparedMsgs, preconnectResult] = await Promise.all([
+              memorySearchPromise,
+              prepareMessagesTask,
+              llmPreconnectTask
+            ]);
+
+            const parallelTime = Date.now() - parallelStartTime;
+            console.log(`[并行架构] ⏱️ 并行处理总耗时: ${parallelTime}ms`);
+
+            // 如果记忆搜索成功，添加到消息开头
+            if (memoryContext) {
+              preparedMsgs.unshift(memoryContext);
+              console.log('[并行架构] ✅ 记忆上下文已添加到消息队列');
             }
 
-            // 调用流式API
+            console.log(`[并行架构] 🚀 开始LLM流式调用... (预连接: ${preconnectResult ? '成功' : '跳过'})`);
+
+            // 调用流式API - 使用并行处理后的消息
             const response = await fetch('/api/chat-stream', {
               method: 'POST',
               headers: {
@@ -561,7 +622,8 @@ export const useChatStore = create<ChatStore>()(
               },
               body: JSON.stringify({
                 model: currentModel,
-                messages: recentMsgs, // 直接发送消息，不添加额外的system prompt
+                messages: preparedMsgs, // 使用并行处理后的消息
+                enableSmartRouting: enableSmartRouting, // 智能路由参数
               }),
             });
 
@@ -689,7 +751,8 @@ export const useChatStore = create<ChatStore>()(
             type: 'assistant',
             content: finalStreamingMessage,
             reasoning: finalStreamingReasoning || undefined, // 如果有思考过程，则保存
-            model: currentModel, // 记录使用的模型
+            model: currentModel, // 记录请求的模型
+            actualModel: streamingStats?.model || currentModel, // 记录实际使用的模型
             responseTime: streamingStats?.responseTime || responseTime, // 使用API返回的响应时间或本地计算的
             tokens: streamingStats?.usage || (streamingStats?.totalTokens ? {
               total_tokens: streamingStats.totalTokens,
@@ -702,7 +765,12 @@ export const useChatStore = create<ChatStore>()(
 
           // 生成统计文本
           const parts = [];
-          parts.push(`模型: ${currentModel}`);
+          const actualModel = streamingStats?.model || currentModel;
+          if (actualModel !== currentModel) {
+            parts.push(`模型: ${actualModel} (智能选择)`);
+          } else {
+            parts.push(`模型: ${currentModel}`);
+          }
           if (streamingStats?.generatedTokens || streamingStats?.totalTokens) {
             const generatedTokens = streamingStats.generatedTokens || streamingStats.totalTokens || 0;
             parts.push(`生成: ${generatedTokens}`);
