@@ -610,7 +610,7 @@ export const useChatStore = create<ChatStore>()(
                       set(state => {
                         const isFirstContent = state.streamingMessage === '';
                         const thinkingTime = isFirstContent && state.thinkingStartTime 
-                          ? Date.now() - state.thinkingStartTime 
+                          ? Math.max(0, Date.now() - state.thinkingStartTime) 
                           : undefined;
                         
                         console.log(`[思考时间] ${currentModel} 思考用时: ${thinkingTime ? (thinkingTime / 1000).toFixed(1) : 0}s`);
@@ -707,7 +707,7 @@ export const useChatStore = create<ChatStore>()(
             
             // 如果有思考时间，单独显示
             if (streamingStats.thinkingTime) {
-              const answerTime = actualResponseTime - streamingStats.thinkingTime;
+              const answerTime = Math.max(0, actualResponseTime - streamingStats.thinkingTime);
               parts.push(`思考: ${(streamingStats.thinkingTime / 1000).toFixed(1)}s`);
               parts.push(`回答: ${(answerTime / 1000).toFixed(1)}s`);
               parts.push(`总时间: ${(actualResponseTime / 1000).toFixed(1)}s`);
@@ -718,7 +718,7 @@ export const useChatStore = create<ChatStore>()(
           } else {
             const actualResponseTime = streamingStats?.responseTime || responseTime;
             if (streamingStats?.thinkingTime) {
-              const answerTime = actualResponseTime - streamingStats.thinkingTime;
+              const answerTime = Math.max(0, actualResponseTime - streamingStats.thinkingTime);
               parts.push(`思考: ${(streamingStats.thinkingTime / 1000).toFixed(1)}s`);
               parts.push(`回答: ${(answerTime / 1000).toFixed(1)}s`);
               parts.push(`总时间: ${(actualResponseTime / 1000).toFixed(1)}s`);

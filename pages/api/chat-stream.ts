@@ -247,13 +247,13 @@ export default async function handler(
             // 计算响应时间并发送统计信息
             const responseTime = Date.now() - startTime;
             
-            // 生成性能报告
+            // 生成性能报告 - 确保时间都是正数
             const performanceReport = {
               totalTime: responseTime,
-              connectionTime: performanceTracker.llmConnectionEnd - performanceTracker.llmConnectionStart,
-              timeToFirstToken: performanceTracker.firstTokenTime ? performanceTracker.firstTokenTime - performanceTracker.llmConnectionEnd : 0,
-              timeToFirstContent: performanceTracker.firstContentTime ? performanceTracker.firstContentTime - performanceTracker.llmConnectionEnd : 0,
-              streamingTime: performanceTracker.responseComplete - (performanceTracker.firstContentTime || performanceTracker.llmConnectionEnd)
+              connectionTime: Math.max(0, performanceTracker.llmConnectionEnd - performanceTracker.llmConnectionStart),
+              timeToFirstToken: performanceTracker.firstTokenTime ? Math.max(0, performanceTracker.firstTokenTime - performanceTracker.llmConnectionEnd) : 0,
+              timeToFirstContent: performanceTracker.firstContentTime ? Math.max(0, performanceTracker.firstContentTime - performanceTracker.llmConnectionEnd) : 0,
+              streamingTime: Math.max(0, performanceTracker.responseComplete - (performanceTracker.firstContentTime || performanceTracker.llmConnectionEnd))
             };
             
             // 输出详细性能报告到终端
@@ -352,8 +352,8 @@ export default async function handler(
                 contentBuffer += delta.content;
                 
                 // 优化流畅度：更小的缓冲和更短的间隔
-                const flushThreshold = model === 'gemini-2.5-pro' ? 5 : 3; // 更小的缓冲，提升流畅度
-                const flushInterval = model === 'gemini-2.5-pro' ? 30 : 20; // 更短的间隔
+                const flushThreshold = model === 'gemini-2.5-pro' ? 3 : 1; // 更小的缓冲，提升流畅度
+                const flushInterval = model === 'gemini-2.5-pro' ? 20 : 10; // 更短的间隔
                 
                 // 当缓冲区达到阈值或超过时间间隔时发送
                 if (contentBuffer.length >= flushThreshold || 

@@ -156,7 +156,7 @@ export class MemoryExtractor {
   }
 
   private calculateImportance(category: MemoryCategory): number {
-    const weights = {
+    const weights: Record<string, number> = {
       personal_info: 9,
       device_info: 8,      // 设备信息重要性高
       work_context: 8, 

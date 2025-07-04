@@ -21,7 +21,7 @@ const MODEL_OPTIONS: { value: SupportedModel; label: string; description: string
   { value: 'claude-3-7-sonnet-latest', label: 'Claude 3.7 Sonnet', description: 'Anthropic Claude 3.7 Sonnet' },
 ];
 
-function useScrollToBottom() {
+function useScrollToBottom(streamingMessage?: string, streamingReasoning?: string) {
   // for auto-scroll
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -57,6 +57,13 @@ function useScrollToBottom() {
       scrollToBottom();
     }
   }, [autoScroll, userInteracting]); // 简化逻辑，避免循环
+  
+  // 流式输出时强制滚动到底部
+  useLayoutEffect(() => {
+    if (streamingMessage || streamingReasoning) {
+      scrollToBottom();
+    }
+  }, [streamingMessage, streamingReasoning]);
 
   // 处理用户滚动事件
   const handleScroll = () => {
@@ -142,7 +149,7 @@ export function ChatBox() {
     setUserInput(text);
   };
   
-  const { scrollRef, setAutoScroll, scrollToBottom, handleScroll } = useScrollToBottom();
+  const { scrollRef, setAutoScroll, scrollToBottom, handleScroll } = useScrollToBottom(streamingMessage, streamingReasoning);
 
   // 只在首次加载时检查模型状态，添加防重复调用机制
   useEffect(() => {
