@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useRef, useState, useEffect } from 'react';
+import React, { useLayoutEffect, useRef, useState, useEffect, useMemo } from 'react';
 
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
@@ -127,6 +127,57 @@ const shouldSubmit = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
   return e.ctrlKey;
 };
 
+// 流式消息组件，专门用于优化渲染性能
+const StreamingMessage = React.memo(({ content, currentModel, modelStatus }: { 
+  content: string, 
+  currentModel: string, 
+  modelStatus: Record<string, boolean> 
+}) => {
+  console.log(`[StreamingMessage] 重新渲染，内容长度: ${content.length}`);
+  
+  return (
+    <div className="chat chat-start">
+      <div className="chat-image avatar">
+        <div className="w-10 rounded-full">
+          <Image
+            src="/ai-avatar.svg"
+            alt=""
+            width={40}
+            height={40}
+          />
+        </div>
+      </div>
+      <div className="chat-header">
+        <time className="text-xs opacity-50 mx-2">
+          💬 正在回答...
+        </time>
+        <span className="text-xs opacity-50 mx-2">
+          {currentModel} 
+          {modelStatus[currentModel] === true && ' ✅'}
+          {modelStatus[currentModel] === false && ' ❌'}
+        </span>
+      </div>
+      <div className="chat-bubble">
+        <div>
+          <Markdown message={{
+            id: Date.now(),
+            type: 'assistant',
+            content: content,
+            createTime: '',
+            updateTime: '',
+            isLoading: false,
+            isError: false
+          }} fontSize={14} defaultShow={true} />
+          <span className="animate-pulse ml-1">▋</span>
+          <div className="text-xs opacity-50 mt-1">
+            已输出 {content.length} 字符
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
 export function ChatBox() {
   const [userInput, setUserInput] = useState('');
   const [modelStatus, setModelStatus] = useState<Record<string, boolean>>({});
@@ -145,24 +196,32 @@ export function ChatBox() {
   const isStreaming = useChatStore((state) => state.isStreaming);
   const isThinking = useChatStore((state) => state.isThinking);
   
-  // 调试：监听流式状态变化
-  useEffect(() => {
-    if (streamingMessage) {
-      console.log(`[前端组件调试] streamingMessage 更新，长度: ${streamingMessage.length}`);
-    }
-  }, [streamingMessage]);
-  
-  useEffect(() => {
-    if (streamingReasoning) {
-      console.log(`[前端组件调试] streamingReasoning 更新，长度: ${streamingReasoning.length}`);
-    }
-  }, [streamingReasoning]);
-
   const onInput = (text: string) => {
     setUserInput(text);
   };
   
   const { scrollRef, setAutoScroll, scrollToBottom, handleScroll } = useScrollToBottom(streamingMessage, streamingReasoning);
+
+  // 调试：监听流式状态变化
+  useEffect(() => {
+    if (streamingMessage) {
+      console.log(`[前端组件调试] streamingMessage 更新，长度: ${streamingMessage.length}`);
+      // 强制滚动到底部
+      setTimeout(() => {
+        scrollToBottom();
+      }, 10);
+    }
+  }, [streamingMessage, scrollToBottom]);
+  
+  useEffect(() => {
+    if (streamingReasoning) {
+      console.log(`[前端组件调试] streamingReasoning 更新，长度: ${streamingReasoning.length}`);
+      // 强制滚动到底部
+      setTimeout(() => {
+        scrollToBottom();
+      }, 10);
+    }
+  }, [streamingReasoning, scrollToBottom]);
 
   // 只在首次加载时检查模型状态，添加防重复调用机制
   useEffect(() => {
@@ -486,11 +545,11 @@ export function ChatBox() {
                     </div>
                   )}
                   
-                  {/* 流式最终回答 */}
+                  {/* 流式最终回答 - 使用优化的组件 */}
                   {streamingMessage && (
-                    <div>
+                    <div key={`streaming-${streamingMessage.length}`}>
                       <Markdown message={{
-                        id: 0,
+                        id: Date.now(), // 使用时间戳确保唯一性
                         type: 'assistant',
                         content: streamingMessage,
                         createTime: '',
@@ -499,6 +558,10 @@ export function ChatBox() {
                         isError: false
                       }} fontSize={14} defaultShow={true} />
                       <span className="animate-pulse ml-1">▋</span>
+                      {/* 添加字符计数调试信息 */}
+                      <div className="text-xs opacity-50 mt-1">
+                        🔄 已输出 {streamingMessage.length} 字符 | 实时更新中...
+                      </div>
                     </div>
                   )}
                 </div>
