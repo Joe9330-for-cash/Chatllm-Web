@@ -478,47 +478,49 @@ export const useChatStore = create<ChatStore>()(
 
             console.log('[Stream API Call] 当前选择的模型:', currentModel);
             
-            // ✅ MySQL记忆功能：搜索相关记忆并添加到上下文
+            // 🚀 记忆功能优化：快速搜索，减少延迟
             console.log(`[Memory Debug] 记忆功能状态: ${get().memoryEnabled ? '启用' : '禁用'}`);
             console.log(`[Memory Debug] 用户ID: ${get().userId}`);
             
             if (get().memoryEnabled) {
               try {
-                console.log('[Memory] 开始搜索相关记忆...');
-                console.log(`[Memory] 搜索查询: "${content}"`);
+                console.log('[Memory] 🔍 快速搜索相关记忆...');
                 
-                // 先尝试获取用户的所有记忆作为备选
-                const statsResponse = await fetch(`/api/memory/stats?userId=${get().userId}`);
-                const statsData = await statsResponse.json();
-                console.log(`[Memory] 用户总记忆数: ${statsData.stats?.totalMemories || 0}`);
+                // 设置快速超时，避免阻塞
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 1000); // 1秒超时
                 
-                // 搜索相关记忆
-                const searchUrl = `/api/memory/vector-search?userId=${get().userId}&query=${encodeURIComponent(content)}&limit=100`;
-                console.log(`[Memory] 向量搜索URL: ${searchUrl}`);
+                const searchUrl = `/api/memory/vector-search?userId=${get().userId}&query=${encodeURIComponent(content)}&limit=3`;
+                const response = await fetch(searchUrl, { 
+                  signal: controller.signal 
+                });
+                clearTimeout(timeoutId);
                 
-                const response = await fetch(searchUrl);
                 const data = await response.json();
-                console.log(`[Memory] 搜索响应:`, data);
                 
                 if (data.success && data.results && data.results.length > 0) {
                   const memoryTexts = data.results.map((result: any) => 
-                    `[${result.memory.category}] ${result.memory.content} (相关性:${(result.relevanceScore * 100).toFixed(1)}%)`
+                    `[记忆] ${result.memory.content}`
                   );
-                  const memoryContext = `基于我对用户的了解：\n${memoryTexts.join('\n')}\n\n请结合这些信息来回答用户的问题。`;
+                  const memoryContext = `用户背景信息：\n${memoryTexts.join('\n')}\n\n请结合这些信息回答。`;
                   
                   recentMsgs.unshift({
                     role: 'system' as const,
                     content: memoryContext,
                   });
-                  console.log(`[Memory] ✅ 添加了 ${data.results.length} 条相关记忆到上下文`);
+                  console.log(`[Memory] ✅ 添加了 ${data.results.length} 条记忆到上下文`);
                 } else {
-                  console.log('[Memory] 未找到相关记忆，继续正常对话');
+                  console.log('[Memory] 未找到相关记忆');
                 }
-              } catch (memoryError) {
-                console.warn('[Memory] 记忆搜索失败，继续正常对话:', memoryError);
+              } catch (memoryError: any) {
+                if (memoryError?.name === 'AbortError') {
+                  console.warn('[Memory] 记忆搜索超时，继续正常对话');
+                } else {
+                  console.warn('[Memory] 记忆搜索失败，继续正常对话:', memoryError);
+                }
               }
             } else {
-              console.log('[Memory] ⚠️ 记忆功能已禁用，跳过记忆搜索');
+              console.log('[Memory] ⚠️ 记忆功能已禁用');
             }
             
             // 如果是新对话或者刚切换了模型，添加明确的身份指导
