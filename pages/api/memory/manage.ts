@@ -1,5 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { getMemoryManager } from '@/lib/memory/manager';
+// import { getMemoryManager } from '@/lib/memory/manager';
 
 export default async function handler(
   req: NextApiRequest,
@@ -9,6 +9,9 @@ export default async function handler(
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  // 🚧 未来功能：记忆管理API
+  // 当前为存根实现
+  
   try {
     const { userId, limit = 10 } = req.query;
 
@@ -18,24 +21,22 @@ export default async function handler(
       });
     }
 
-    console.log(`[Memory API] 获取用户记忆 - 用户: ${userId}, 限制: ${limit}`);
+    console.log(`[Manage API] 🚧 存根调用 - 用户: ${userId}, 限制: ${limit}`);
 
-    const memoryManager = getMemoryManager();
-    const memories = memoryManager.getUserCoreMemories(userId as string);
-
-    console.log(`[Memory API] ✅ 获取完成，返回 ${memories.length} 条记忆`);
-
+    // 返回存根结果
     res.status(200).json({
       success: true,
-      memories: memories.slice(0, parseInt(limit as string) || 10),
-      count: memories.length,
+      memories: [],
+      count: 0,
+      note: '🚧 此功能尚未完全实现',
+      message: '记忆管理功能在未来版本中提供'
     });
 
   } catch (error) {
-    console.error('[Memory API] 记忆获取失败:', error);
+    console.error('[Manage API] 存根错误:', error);
     res.status(500).json({
       success: false,
-      error: '记忆获取失败',
+      error: '🚧 存根API错误',
       details: error instanceof Error ? error.message : '未知错误',
     });
   }

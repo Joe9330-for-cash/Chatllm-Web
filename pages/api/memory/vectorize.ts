@@ -1,221 +1,134 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { getMemoryManager } from '@/lib/memory/manager';
-import { getVectorDatabase } from '@/lib/memory/vector-database';
 import { getEmbeddingService } from '@/lib/memory/embedding-service';
+import { getVectorDatabase } from '@/lib/memory/vector-database';
+import { getMemoryDB } from '@/lib/memory/database';
 
-export default async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse
-) {
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
   try {
-    const { userId, action = 'stats' } = req.query;
+    const { userId, memoryId, content, category, batchMode = false } = req.body;
 
-    if (!userId) {
-      return res.status(400).json({ 
-        error: 'Missing required parameter: userId' 
-      });
+    if (!userId || (!batchMode && !memoryId && !content)) {
+      return res.status(400).json({ error: 'Missing required fields: userId and (memoryId or content) when not in batch mode' });
     }
 
-    console.log(`[Vectorize API] 用户: ${userId}, 操作: ${action}`);
+    console.log(`[Vectorize API] 开始向量化 - 用户: ${userId}, 批量模式: ${batchMode}`);
 
-    const memoryManager = getMemoryManager();
-    const vectorDB = getVectorDatabase();
     const embeddingService = getEmbeddingService();
+    const vectorDB = getVectorDatabase();
+    const memoryDB = getMemoryDB();
 
-    switch (action) {
-      case 'stats':
-        // 获取向量化统计信息
-        const regularMemories = memoryManager.getUserCoreMemories(userId as string);
-        const vectorStats = await vectorDB.getUserMemoryStats(userId as string);
-        
-        return res.status(200).json({
-          success: true,
-          message: '向量化系统状态正常',
-          userStats: {
-            totalRegularMemories: regularMemories.length,
-            totalVectorMemories: vectorStats.totalMemories,
-            vectorizedMemories: vectorStats.vectorizedMemories,
-            pendingVectorization: regularMemories.length - vectorStats.vectorizedMemories,
-            vectorizationRate: vectorStats.totalMemories > 0 
-              ? `${((vectorStats.vectorizedMemories / vectorStats.totalMemories) * 100).toFixed(1)}%`
-              : '0%',
-            categories: vectorStats.categories,
-            avgVectorDimensions: vectorStats.avgVectorDimensions
-          },
-          systemStatus: 'ready',
-          embeddingModel: embeddingService.getModelInfo()
-        });
+    let processedCount = 0;
+    const results = [];
 
-      case 'migrate':
-        // 将现有记忆迁移到向量数据库
-        const memories = memoryManager.getUserCoreMemories(userId as string);
-        const migrationResults = [];
-        
-        console.log(`[Vectorize API] 开始迁移 ${memories.length} 条记忆到向量数据库`);
-        
-        for (const memory of memories) {
-          try {
-            // 生成向量
-            const vector = await embeddingService.generateEmbedding(memory.content);
-            
-            // 存储到向量数据库
-            const vectorId = await vectorDB.storeMemoryVector(
-              userId as string,
-              memory.content,
-              vector,
-              memory.category,
-              {
-                originalId: memory.id,
-                tags: memory.tags,
-                importance: memory.importance,
-                source: memory.source || 'migrated'
-              }
-            );
+    if (batchMode) {
+      // 批量向量化模式：处理用户的所有记忆
+      console.log(`[Vectorize API] 🔄 批量向量化模式`);
+      
+      const userMemories = memoryDB.getUserMemories(userId, 1000);
+      console.log(`[Vectorize API] 找到 ${userMemories.length} 条记忆需要处理`);
 
-            migrationResults.push({
-              originalId: memory.id,
-              vectorId,
-              content: memory.content.substring(0, 50) + '...',
-              vectorDimensions: vector.length,
-              success: true
-            });
-
-          } catch (error) {
-            console.error(`[Vectorize API] 迁移记忆失败 ID: ${memory.id}`, error);
-            migrationResults.push({
-              originalId: memory.id,
-              content: memory.content.substring(0, 50) + '...',
-              success: false,
-              error: error instanceof Error ? error.message : '未知错误'
-            });
-          }
-        }
-
-        const successCount = migrationResults.filter(r => r.success).length;
-        
-        return res.status(200).json({
-          success: true,
-          message: `迁移完成：${successCount}/${memories.length} 条记忆成功向量化`,
-          migrationResults,
-          summary: {
-            total: memories.length,
-            successful: successCount,
-            failed: memories.length - successCount,
-            successRate: `${((successCount / memories.length) * 100).toFixed(1)}%`
-          }
-        });
-
-      case 'test':
-        // 测试向量化系统
-        const testMemories = memoryManager.getUserCoreMemories(userId as string);
-        
-        if (testMemories.length === 0) {
-          return res.status(200).json({
-            success: true,
-            message: '用户暂无记忆数据，无法进行测试',
-            testResults: []
-          });
-        }
-
-        const testMemory = testMemories[0];
-        
+      for (const memory of userMemories) {
         try {
-          // 测试向量生成
-          const testVector = await embeddingService.generateEmbedding(testMemory.content);
+          // 生成向量
+          const embedding = await embeddingService.generateEmbedding(memory.content);
           
-          // 测试API连接
-          const connectionTest = await embeddingService.testConnection();
-          
-          return res.status(200).json({
-            success: true,
-            message: '向量化系统测试成功',
-            testResults: {
-              memoryId: testMemory.id,
-              content: testMemory.content.substring(0, 100),
-              vectorDimensions: testVector.length,
-              connectionTest,
-              systemReady: true,
-              embeddingModel: embeddingService.getModelInfo()
-            }
-          });
-
-        } catch (error) {
-          return res.status(500).json({
-            success: false,
-            message: '向量化系统测试失败',
-            error: error instanceof Error ? error.message : '未知错误'
-          });
-        }
-
-      case 'search-test':
-        // 测试向量搜索
-        const { query = '测试查询' } = req.query;
-        
-        try {
-          const queryVector = await embeddingService.generateEmbedding(query as string);
-          const searchResults = await vectorDB.searchSimilarMemories(
-            userId as string,
-            queryVector,
-            5,
-            0.3
+          // 存储向量
+          const vectorId = await vectorDB.storeMemoryVector(
+            userId,
+            memory.content,
+            embedding,
+            memory.category,
+            { memoryId: memory.id, importance: memory.importance }
           );
 
-          return res.status(200).json({
-            success: true,
-            message: '向量搜索测试完成',
-            searchResults: {
-              query: query as string,
-              resultsCount: searchResults.length,
-              results: searchResults.map(result => ({
-                id: result.memory.id,
-                content: result.memory.content.substring(0, 100),
-                similarity: result.similarity.toFixed(4),
-                distance: result.distance.toFixed(4),
-                category: result.memory.category
-              }))
-            }
+          results.push({
+            memoryId: memory.id,
+            vectorId,
+            content: memory.content.substring(0, 100) + '...',
+            category: memory.category,
+            vectorDimensions: embedding.length,
+            status: 'success'
           });
 
-        } catch (error) {
-          return res.status(500).json({
-            success: false,
-            message: '向量搜索测试失败',
-            error: error instanceof Error ? error.message : '未知错误'
-          });
-        }
-
-      case 'clear':
-        // 清空向量数据库（仅用于测试）
-        try {
-          const db = vectorDB.getDatabase();
-          db.exec('DELETE FROM memory_vectors');
-          db.exec('DELETE FROM vector_memories');
+          processedCount++;
           
-          return res.status(200).json({
-            success: true,
-            message: '向量数据库已清空'
-          });
+          if (processedCount % 5 === 0) {
+            console.log(`[Vectorize API] 已处理 ${processedCount}/${userMemories.length} 条记忆`);
+          }
 
         } catch (error) {
-          return res.status(500).json({
-            success: false,
-            message: '清空向量数据库失败',
+          console.error(`[Vectorize API] 记忆${memory.id}向量化失败:`, error);
+          results.push({
+            memoryId: memory.id,
+            content: memory.content.substring(0, 100) + '...',
+            category: memory.category,
+            status: 'failed',
             error: error instanceof Error ? error.message : '未知错误'
           });
         }
+      }
 
-      default:
-        return res.status(400).json({
-          error: `Unknown action: ${action}. Supported actions: stats, migrate, test, search-test, clear`
-        });
+    } else {
+      // 单个记忆向量化模式
+      console.log(`[Vectorize API] 🎯 单个记忆向量化模式`);
+      
+      let targetContent = content;
+      let targetCategory = category;
+      let targetMemoryId = memoryId;
+
+      // 如果提供了memoryId但没有content，则需要content参数
+      if (memoryId && !content) {
+        return res.status(400).json({ error: '使用memoryId时必须提供content参数' });
+      }
+
+      // 生成向量
+      const embedding = await embeddingService.generateEmbedding(targetContent);
+      
+      // 存储向量
+      const vectorId = await vectorDB.storeMemoryVector(
+        userId,
+        targetContent,
+        embedding,
+        targetCategory,
+        { memoryId: targetMemoryId, importance: 5 }
+      );
+
+      results.push({
+        memoryId: targetMemoryId,
+        vectorId,
+        content: targetContent.substring(0, 100) + '...',
+        category: targetCategory,
+        vectorDimensions: embedding.length,
+        status: 'success'
+      });
+
+      processedCount = 1;
     }
 
+    console.log(`[Vectorize API] ✅ 向量化完成: 成功处理 ${processedCount} 条记忆`);
+
+    return res.status(200).json({
+      success: true,
+      processedCount,
+      results,
+      mode: batchMode ? 'batch' : 'single',
+      summary: {
+        totalMemories: results.length,
+        successCount: results.filter(r => r.status === 'success').length,
+        failedCount: results.filter(r => r.status === 'failed').length,
+        avgVectorDimensions: results.length > 0 ? results[0].vectorDimensions : 0
+      }
+    });
+
   } catch (error) {
-    console.error('[Vectorize API] 操作失败:', error);
-    res.status(500).json({
-      success: false,
-      error: '向量化操作失败',
-      details: error instanceof Error ? error.message : '未知错误',
+    console.error('[Vectorize API] ❌ 向量化失败:', error);
+    return res.status(500).json({ 
+      error: '向量化失败',
+      details: error instanceof Error ? error.message : '未知错误'
     });
   }
 }
