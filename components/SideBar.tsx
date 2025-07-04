@@ -3,7 +3,7 @@ import React from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 
-import { IconAdd, IconInfo, IconSetting } from './Icons';
+import { IconAdd, IconInfo, IconSetting, IconMemoryUpload } from './Icons';
 
 import { useChatStore } from '@/store/chat';
 
@@ -23,13 +23,13 @@ function BottomSettings() {
             <IconSetting />
           </button>
         </div>
-        <Link
-          href="https://github.com/Ryan-yang125/ChatLLM-Web"
-          target="_blank"
+        <button
+          onClick={() => chatStore.toggleMemoryUploadModal(true)}
           className="btn btn-ghost btn-xs"
+          title="记忆上传"
         >
-          <Image src="github-mark-white.svg" alt="" width={24} height={24} />
-        </Link>
+          <IconMemoryUpload />
+        </button>
       </div>
       <button
         onClick={chatStore.newConversation}
