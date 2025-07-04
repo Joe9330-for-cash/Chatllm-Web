@@ -178,6 +178,8 @@ const StreamingMessage = React.memo(({ content, currentModel, modelStatus }: {
   );
 });
 
+StreamingMessage.displayName = 'StreamingMessage';
+
 export function ChatBox() {
   const [userInput, setUserInput] = useState('');
   const [modelStatus, setModelStatus] = useState<Record<string, boolean>>({});
